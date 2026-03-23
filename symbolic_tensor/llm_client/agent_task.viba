@@ -1,0 +1,5 @@
+AgentTask :=
+    Dataclass
+    * $workspace_dir str
+    * $output_relative_dir str
+    * $prompt str

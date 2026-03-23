@@ -67,27 +67,20 @@ symbolic_transform_forward :=
 
         replace TODO in f"{workspace_dir}/mutable_output_dir" with target semantic text
     ''')
-    <- ($transform_request SymbolicTransformRequest <- $workspace_dir <- f"{workspace_dir}/mutable_output_dir" <- $prompt)
-    <- ($all_transform_request <- NestList[$transform_request])
-    <- (void <- GenerateOutput[$method] <- $all_transform_request)
+    <- ($agent_task AgentTask <- $workspace_dir <- "mutable_output_dir" <- $prompt)
+    <- ($all_tasks <- NestList[$agent_task])
+    <- (void <- GenerateOutput[$method] <- $all_tasks)
     # copy back: LLM Write tool replaces symlinks with regular files,
     # so read from view files and write back to tensor storage.
     <- (void <- copy_back_to_storage_view <- f"{workspace_dir}/mutable_output_dir" <- $scalar_output_view)
 
-SymbolicTransformRequest :=
-    Object
-    * $workspace_dir str
-    * $output_dir str
-    * $prompt str
+AgentTask := Import[symbolic_tensor/llm_client/agent_task.viba]
 
 GenerateOutput["coding_agent"] :=
     void
-    <- NestList[$request SymbolicTransformRequest]
+    <- NestList[AgentTask]
     # inline
-    <- (($workspace_dir, $prompt) <- $request)
-    <- $llm_query Import[symbolic_tensor/llm_client/coding_agent_query.py].coding_agent_query
-    <- $async_do_for_one_batch (void <- $llm_query <- $prompt <- $workspace_dir)
-    <- (void <- async_gather_run <- NestList[$async_do_for_one_batch])
+    <- Import[symbolic_tensor/llm_client/coding_agent_task_handler.viba]
 
 # be carefull there claude code instance called in coding_agent_query.
 # make sure env var CLAUDECODE unset.

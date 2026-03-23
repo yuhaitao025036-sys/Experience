@@ -1,10 +1,8 @@
 import os
-import asyncio
 import tempfile
 import itertools
 import shutil
 import torch
-from dataclasses import dataclass
 from typing import Any, List, Tuple, Union
 
 from symbolic_tensor.tensor_util.todo_tensor_like import todo_tensor_like
@@ -13,45 +11,8 @@ from symbolic_tensor.tensor_util.slice_tensor import slice_tensor
 from symbolic_tensor.tensor_util.dump_view import dump_view
 from symbolic_tensor.function.get_input_query_tensor import get_input_query_tensor
 from symbolic_tensor.function.select_qkv_indexes import select_qkv_indexes
-from symbolic_tensor.llm_client.coding_agent_query import coding_agent_query
-
-
-@dataclass
-class SymbolicTransformRequest:
-    workspace_dir: str
-    output_dir: str
-    prompt: str
-
-
-def _flatten_nested(nested) -> list:
-    """Flatten a nested list structure into a flat list."""
-    if not isinstance(nested, list):
-        return [nested]
-    result = []
-    for item in nested:
-        result.extend(_flatten_nested(item))
-    return result
-
-
-def _generate_output_coding_agent(all_requests) -> None:
-    """GenerateOutput["coding_agent"]: run coding_agent_query concurrently for all requests."""
-    flat_requests = _flatten_nested(all_requests)
-
-    async def _do_one(request: SymbolicTransformRequest):
-        workspace_dir = request.workspace_dir
-        prompt = request.prompt
-        env_backup = os.environ.pop("CLAUDECODE", None)
-        try:
-            async for _ in coding_agent_query(prompt=prompt, cwd=workspace_dir, allowed_tools=["Read", "Edit", "Write"]):
-                pass
-        finally:
-            if env_backup is not None:
-                os.environ["CLAUDECODE"] = env_backup
-
-    async def _run_all():
-        await asyncio.gather(*[_do_one(req) for req in flat_requests])
-
-    asyncio.run(_run_all())
+from symbolic_tensor.llm_client.agent_task import AgentTask
+from symbolic_tensor.llm_client.coding_agent_task_handler import CodingAgentTaskHandler
 
 
 def _scalar_slice_indices(shape: torch.Size) -> List[List[int]]:
@@ -174,7 +135,7 @@ def symbolic_transform_forward(
     # Phase 1: Build requests per scalar element
     coords_list = _scalar_slice_indices(input.size())
     flat_selected_indexes: List[List[torch.Tensor]] = []
-    flat_requests: List[SymbolicTransformRequest] = []
+    flat_tasks: List[AgentTask] = []
     flat_copyback_info: List[Tuple[str, torch.Tensor]] = []
 
     for coords in coords_list:
@@ -232,14 +193,14 @@ def symbolic_transform_forward(
             f"Replace TODO in \"{output_dir}\" with target semantic text.\n"
         )
 
-        flat_requests.append(SymbolicTransformRequest(workspace_dir=workspace_dir, output_dir=output_dir, prompt=prompt))
+        flat_tasks.append(AgentTask(workspace_dir=workspace_dir, output_relative_dir="mutable_output_dir", prompt=prompt))
         flat_copyback_info.append((output_dir, scalar_output_view))
 
     # Phase 2: Dispatch to GenerateOutput[method]
-    all_transform_requests = _build_nested_result(flat_requests, list(input.size()))
+    all_tasks = _build_nested_result(flat_tasks, list(input.size()))
 
     if method == "coding_agent":
-        _generate_output_coding_agent(all_transform_requests)
+        CodingAgentTaskHandler()(all_tasks)
     else:
         raise ValueError(f"Unknown transform method: {method}")
 
@@ -247,8 +208,8 @@ def symbolic_transform_forward(
     for output_dir, scalar_output_view in flat_copyback_info:
         _copy_back_to_storage_view(output_dir, scalar_output_view)
 
-    for req in flat_requests:
-        shutil.rmtree(req.workspace_dir, ignore_errors=True)
+    for task in flat_tasks:
+        shutil.rmtree(task.workspace_dir, ignore_errors=True)
 
     # Build nested structure matching input shape
     selected_experience_qkv_indexes_list = _build_nested_result(
