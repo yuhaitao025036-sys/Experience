@@ -55,7 +55,7 @@ if __name__ == "__main__":
     ]
     forward_prompt = "Translate the English text to French."
     topk = 2
-    methods = ["coding_agent", "raw_llm_api"]
+    methods = ["raw_llm_api", "coding_agent"]
 
     # Define scale tests: 1x, 2x, 3x inputs
     scale_inputs = {

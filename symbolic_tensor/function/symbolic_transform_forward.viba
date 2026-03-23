@@ -2,15 +2,13 @@
 # Prompt is only for comprehension. do not generate
 Prompt := str
 
-TransformMethod := "coding_agent" | "raw_llm_api"
-
 symbolic_transform_forward :=
     ($output Symboilc[torch.Tensor], $selected_experience_qkv_indexes_list NestList[list[torch.Tensor[int]]])
     <- $input Symboilc[torch.Tensor]
     <- $experience Experience[Symbolic[torch.Tensor]]
     <- $forward_prompt Prompt # default ""
     <- $topk int # default 16
-    <- $method TransformMethod # default coding_agent
+    <- $method ("coding_agent" | "raw_llm_api") # default coding_agent
     # inline
     <- ($output
         <- Import[symbolic_tensor/tensor_util/todo_tensor_like.viba]
@@ -21,7 +19,8 @@ symbolic_transform_forward :=
     <- (NestList[$scalar_output_value Symbolic[torch.Tensor]] <- NestList[$slice_tensor] <- $output)
     <- ($input_query
         <- Import[symbolic_tensor/function/get_input_query_tensor.viba]
-        <- $input)
+        <- $input
+        <- $method)
     <- (NestList[$scalar_input_view Symbolic[torch.Tensor]] <- NestList[$slice_view] <- $input)
     <- ($batch_input_file_content str <- $scalar_input_view)
     <- ($select_experience_query_indexes list[torch.Tensor[int]]

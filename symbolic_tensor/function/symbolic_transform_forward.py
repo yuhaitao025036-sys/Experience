@@ -131,7 +131,7 @@ def symbolic_transform_forward(
     output = todo_tensor_like(input)
 
     # Generate input query keywords
-    input_query = get_input_query_tensor(input)
+    input_query = get_input_query_tensor(input, llm_method=method)
 
     # Phase 1: Build requests per scalar element
     coords_list = _scalar_slice_indices(input.size())

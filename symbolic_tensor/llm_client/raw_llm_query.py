@@ -1,6 +1,7 @@
 # 安装：pip3 install openai
 import asyncio
 import os
+import time
 from openai import AsyncOpenAI  # 导入异步客户端
 
 # 创建异步客户端
@@ -11,6 +12,7 @@ client = AsyncOpenAI(
 
 async def raw_llm_query(prompt: str):
     # 发送异步请求
+    start = time.time()
     response = await client.chat.completions.create(
         model=os.environ.get('LLM_MODEL'),
         messages=[
@@ -19,6 +21,8 @@ async def raw_llm_query(prompt: str):
         ],
         stream=False
     )
+    end = time.time()
+    print(f"raw_llm_query cost {end - start} seconds")
     return response.choices[0].message.content
 
 if __name__ == "__main__":
