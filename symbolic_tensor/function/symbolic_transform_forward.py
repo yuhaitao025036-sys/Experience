@@ -19,6 +19,7 @@ from symbolic_tensor.llm_client.coding_agent_query import coding_agent_query
 @dataclass
 class SymbolicTransformRequest:
     workspace_dir: str
+    output_dir: str
     prompt: str
 
 
@@ -231,7 +232,7 @@ def symbolic_transform_forward(
             f"Replace TODO in \"{output_dir}\" with target semantic text.\n"
         )
 
-        flat_requests.append(SymbolicTransformRequest(workspace_dir=workspace_dir, prompt=prompt))
+        flat_requests.append(SymbolicTransformRequest(workspace_dir=workspace_dir, output_dir=output_dir, prompt=prompt))
         flat_copyback_info.append((output_dir, scalar_output_view))
 
     # Phase 2: Dispatch to GenerateOutput[method]
