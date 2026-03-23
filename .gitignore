@@ -1,3 +1,4 @@
 __pycache__/
+.claude/
 parser.out
 parsetab.py
