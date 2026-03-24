@@ -128,7 +128,7 @@ symbolic_transform_backward_grad_experience :=
     <- ($select_experience_indexes <- replace_last_tensor_with_full_slice <- $sole_grad_experience_point)
     
     <- ($grad_experience
-        <- Import[symbolic_tensor/tensor_util/todo_tensor_like.viba]
+        <- Import[symbolic_tensor/tensor_util/empty_tensor_like.viba]
         <- $experience)
 
     <- $slice_view Import[symbolic_tensor/tensor_util/slice_view.viba]
@@ -153,6 +153,10 @@ symbolic_transform_backward_grad_experience :=
         <- $slice_view
         <- $grad_experience
         <- $select_experience_indexes)
+    <- (void
+        <- $grad_experience_sliced_view.st_assign
+        <- Import[symbolic_tensor/tensor_util/todo_tensor_like.viba]
+        <- $grad_experience_sliced_view)
     <- ($grad_experience_sliced_value Experience[Symbolic[torch.Tensor]]
         <- $slice_tensor
         <- $grad_experience

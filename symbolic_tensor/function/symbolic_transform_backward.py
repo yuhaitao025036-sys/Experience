@@ -6,6 +6,8 @@ import torch
 from typing import Any, List, Tuple, Union
 
 from symbolic_tensor.tensor_util.todo_tensor_like import todo_tensor_like
+from symbolic_tensor.tensor_util.empty_tensor_like import empty_tensor_like
+from symbolic_tensor.tensor_util.assign_tensor import assign_tensor
 from symbolic_tensor.tensor_util.slice_view import slice_view
 from symbolic_tensor.tensor_util.slice_tensor import slice_tensor
 from symbolic_tensor.tensor_util.dump_view import dump_view
@@ -227,8 +229,8 @@ def symbolic_transform_backward_grad_experience(
     )
     transposed = transpose_pairs_coordinates(pairs)
 
-    # Create grad_experience
-    grad_experience = todo_tensor_like(experience)
+    # Create grad_experience with empty strings (unselected entries stay "")
+    grad_experience = empty_tensor_like(experience)
 
     # ── Numeric channel ──
     grad_experience.data.zero_()
@@ -251,6 +253,8 @@ def symbolic_transform_backward_grad_experience(
         output_sliced = slice_view(output, multi_output_points)
         experience_sliced_view = slice_view(experience, select_experience_indexes)
         grad_experience_sliced_view = slice_view(grad_experience, select_experience_indexes)
+        # Assign TODO to the selected portion of grad_experience (unselected stays "")
+        assign_tensor(grad_experience_sliced_view, todo_tensor_like(grad_experience_sliced_view))
         grad_experience_sliced_value = slice_tensor(grad_experience, select_experience_indexes)
 
         workspace_dir = tempfile.mkdtemp()

@@ -65,6 +65,8 @@ class SymbolicSGD(torch.optim.Optimizer):
         Args:
             closure: Optional closure that reevaluates the model and returns the loss.
         """
+        self._last_step_stats = {"applied": 0, "rejected": 0, "fuzzed": 0, "skipped": 0, "rej_files": 0}
+
         loss = None
         if closure is not None:
             with torch.enable_grad():
@@ -109,6 +111,7 @@ class SymbolicSGD(torch.optim.Optimizer):
                     with open(grad_file, "r", encoding="utf-8") as f:
                         grad_content = f.read().strip()
                     if not grad_content or grad_content == "TODO":
+                        self._last_step_stats["skipped"] += 1
                         continue
 
                     # Ensure param file ends with newline (patch requires it)
@@ -135,10 +138,25 @@ class SymbolicSGD(torch.optim.Optimizer):
                         )
                         if result.returncode != 0:
                             print(f"patch failed for {param_file}: {result.stderr.strip()}")
+                            self._last_step_stats["rejected"] += 1
+                        else:
+                            self._last_step_stats["applied"] += 1
+                            # Check if fuzz was used (partial match)
+                            if "fuzz" in result.stdout.lower():
+                                self._last_step_stats["fuzzed"] += 1
                     finally:
                         os.unlink(patch_path)
 
+                    # Check for .rej file (partial rejection)
+                    rej_path_after = param_file + ".rej"
+                    if os.path.isfile(rej_path_after):
+                        self._last_step_stats["rej_files"] += 1
+
         return loss
+
+    def get_last_step_stats(self) -> dict:
+        """Return patch application stats from the last optimizer step."""
+        return dict(self._last_step_stats)
 
     def zero_grad(self, set_to_none: bool = True) -> None:
         """Reset gradients. If set_to_none=False, also resets grad text storage to 'TODO'."""

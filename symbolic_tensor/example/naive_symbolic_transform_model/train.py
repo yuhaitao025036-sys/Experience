@@ -107,6 +107,7 @@ def main():
 
         # ── Training loop ──
         losses = []
+        patch_stats = []
 
         for iteration in range(1, NUM_ITERATIONS + 1):
             print(f"\n{'─' * 60}")
@@ -161,13 +162,49 @@ def main():
             changed = exp_before != exp_after
             print(f"    Experience[0].value changed: {changed}")
 
+            # Patch application stats
+            stats = optimizer.get_last_step_stats()
+            print(f"    Patch stats: applied={stats['applied']} rejected={stats['rejected']} "
+                  f"fuzzed={stats['fuzzed']} skipped={stats['skipped']} rej_files={stats['rej_files']}")
+
+            # Show experience state after step
+            print("    Experience state after step:")
+            for i in range(experience_tensor.numel()):
+                et = read_storage(experience_tensor, i)
+                print(f"      exp[{i}]: {repr(et[:80])}")
+
             print(f"\n  Iteration {iteration} loss: {mean_loss:.4f}")
+            patch_stats.append(stats)
 
         # ── Save losses ──
         print(f"\n{'=' * 60}")
         print("Training Complete")
         print(f"{'=' * 60}")
         print(f"\nLoss trajectory: {[f'{l:.4f}' for l in losses]}")
+
+        # ── Patch rejection analysis ──
+        print(f"\n{'─' * 60}")
+        print("Patch Application Analysis")
+        print(f"{'─' * 60}")
+        total_applied = sum(s["applied"] for s in patch_stats)
+        total_rejected = sum(s["rejected"] for s in patch_stats)
+        total_fuzzed = sum(s["fuzzed"] for s in patch_stats)
+        total_skipped = sum(s["skipped"] for s in patch_stats)
+        total_rej = sum(s["rej_files"] for s in patch_stats)
+        total_attempts = total_applied + total_rejected
+        print(f"  Total patches attempted: {total_attempts}")
+        print(f"  Applied cleanly: {total_applied - total_fuzzed}")
+        print(f"  Applied with fuzz: {total_fuzzed}")
+        print(f"  Rejected: {total_rejected}")
+        print(f"  Skipped (TODO/empty): {total_skipped}")
+        print(f"  .rej files created: {total_rej}")
+        if total_attempts > 0:
+            print(f"  Success rate: {total_applied / total_attempts * 100:.1f}%")
+            print(f"  Rejection rate: {total_rejected / total_attempts * 100:.1f}%")
+        print(f"\nPer-iteration breakdown:")
+        for i, s in enumerate(patch_stats, 1):
+            print(f"  Iter {i}: applied={s['applied']} rejected={s['rejected']} "
+                  f"fuzzed={s['fuzzed']} skipped={s['skipped']} rej={s['rej_files']}")
 
         with open(LOSS_LOG, "w") as f:
             for i, loss_val in enumerate(losses, 1):
