@@ -37,22 +37,21 @@ if __name__ == "__main__":
     print("Running test_gain_symbolic_sgd...\n")
 
     def run_test(name: str, condition: bool, expected=None, actual=None):
-        # Test passed
         if condition:
             print(f"  \u2713 {name}")
         else:
-            # Test failed, print details
             print(f"  \u2717 {name}")
             if expected is not None and actual is not None:
                 print(f"    expected: {expected}")
                 print(f"    actual:   {actual}")
 
-    # Test: forward -> backward -> optimizer.step() -> forward (with better output)
-    #
+    # ================================================================
+    # Test 1: forward -> backward -> step -> forward (single input)
+    # ================================================================
     # Scenario: Experience has a deliberately wrong French translation.
     # The gradient corrects it. After optimizer.step(), the second forward
     # should produce the corrected translation.
-    print("Test: forward -> backward -> step -> forward (improved output)")
+    print("Test 1: forward -> backward -> step -> forward (single input, improved output)")
     with tempfile.TemporaryDirectory() as tmpdir:
         input_tensor = make_tensor(["Hello world in English"], tmpdir)
 
@@ -127,5 +126,93 @@ if __name__ == "__main__":
         has_bonjor = "Bonjor" in output2_text or "bonjor" in output2_text
         run_test("Second output no longer has 'Bonjor' typo", not has_bonjor)
         run_test("Second output differs from first", output2_text != output1_text)
+
+    # ================================================================
+    # Test 2: forward -> backward -> step -> forward (multi-batch: 2 inputs)
+    # ================================================================
+    print("\n\nTest 2: forward -> backward -> step -> forward (multi-batch: 2 inputs)")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_tensor = make_tensor(
+            ["Hello world in English", "Goodbye my friend"],
+            tmpdir,
+        )
+
+        # Experience with deliberately wrong translations
+        experience_data = [
+            ["greeting\nhello\nworld", "Hello world in English", "Bonjor la mond"],
+            ["farewell\ngoodbye\nfriend", "Goodbye my friend", "Odieu mon ami"],
+        ]
+        experience_tensor = make_tensor(experience_data, tmpdir)
+        experience_tensor.requires_grad_(True)
+
+        optimizer = SymbolicSGD([experience_tensor], lr=1.0)
+
+        # ── First forward ──
+        print("\n  === Iteration 1: Forward ===")
+        output1, selected_indexes1 = symbolic_transform_forward(
+            input_tensor, experience_tensor,
+            forward_prompt="Translate the English text to French.",
+            topk=2,
+        )
+        output1_texts = [read_storage(output1, i) for i in range(output1.numel())]
+        for i, t in enumerate(output1_texts):
+            print(f"  Output[{i}]: {repr(t[:120])}")
+
+        # ── Backward with correction signal ──
+        print("\n  === Iteration 1: Backward ===")
+        grad_output = make_tensor(
+            ["Fix spelling: 'Bonjor la mond' -> 'Bonjour le monde en francais'",
+             "Fix spelling: 'Odieu mon ami' -> 'Adieu mon ami'"],
+            tmpdir,
+        )
+        grad_output.data.fill_(1.0)
+
+        grad_input, grad_experience = symbolic_transform_backward(
+            grad_output, input_tensor, output1, experience_tensor,
+            selected_experience_qkv_indexes_list=selected_indexes1,
+            forward_prompt="Translate the English text to French.",
+            topk=2,
+        )
+        experience_tensor.grad = grad_experience
+
+        for i in range(grad_experience.numel()):
+            gt = read_storage(grad_experience, i)
+            print(f"  grad_experience[{i}]: {repr(gt[:80])}")
+
+        # ── Optimizer step ──
+        print("\n  === Optimizer Step ===")
+        exp_vals_before = [read_storage(experience_tensor, i) for i in range(experience_tensor.numel())]
+        optimizer.step()
+        exp_vals_after = [read_storage(experience_tensor, i) for i in range(experience_tensor.numel())]
+        for i in range(experience_tensor.numel()):
+            print(f"  experience[{i}] before: {repr(exp_vals_before[i][:60])}")
+            print(f"  experience[{i}] after:  {repr(exp_vals_after[i][:60])}")
+        # At least the value entries (index 2 and 5) should have changed
+        run_test("at least one experience entry updated",
+                 any(a != b for a, b in zip(exp_vals_before, exp_vals_after)))
+
+        # ── Second forward with updated experience ──
+        print("\n  === Iteration 2: Forward (after optimizer step) ===")
+        experience_tensor.data.fill_(1.0)
+        output2, selected_indexes2 = symbolic_transform_forward(
+            input_tensor, experience_tensor,
+            forward_prompt="Translate the English text to French.",
+            topk=2,
+        )
+        output2_texts = [read_storage(output2, i) for i in range(output2.numel())]
+        for i, t in enumerate(output2_texts):
+            print(f"  Output[{i}]: {repr(t[:120])}")
+
+        # ── Verify improvement ──
+        print("\n  === Results ===")
+        for i in range(len(output1_texts)):
+            print(f"  Forward 1[{i}]: {repr(output1_texts[i])}")
+            print(f"  Forward 2[{i}]: {repr(output2_texts[i])}")
+        has_bonjor = any("Bonjor" in t or "bonjor" in t for t in output2_texts)
+        run_test("Second output no longer has 'Bonjor' typo", not has_bonjor)
+        has_odieu = any("Odieu" in t or "odieu" in t for t in output2_texts)
+        run_test("Second output no longer has 'Odieu' typo", not has_odieu)
+        run_test("At least one output changed",
+                 any(t1 != t2 for t1, t2 in zip(output1_texts, output2_texts)))
 
     print("\nAll tests completed.")
