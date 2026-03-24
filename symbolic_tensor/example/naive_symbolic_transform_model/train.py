@@ -99,8 +99,6 @@ def main():
         optimizer = SymbolicSGD(
             model.parameters(),
             lr=1.0,
-            step_prompt="You are updating Python-to-Viba translation experience entries "
-                        "(query keywords, key python code, value viba code).",
         )
 
         print(f"\nExperience shape: {list(experience_tensor.shape)}")
