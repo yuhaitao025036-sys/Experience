@@ -118,6 +118,11 @@ class SymbolicSGD(torch.optim.Optimizer):
                         with open(param_file, "w", encoding="utf-8") as f:
                             f.write(param_content + "\n")
 
+                    # Clean up .rej files from previous iterations
+                    rej_path = param_file + ".rej"
+                    if os.path.isfile(rej_path):
+                        os.unlink(rej_path)
+
                     # Write normalized diff to temp file (ensure trailing newline)
                     with tempfile.NamedTemporaryFile(mode="w", suffix=".patch", delete=False, encoding="utf-8") as pf:
                         pf.write(grad_content if grad_content.endswith("\n") else grad_content + "\n")
@@ -125,7 +130,7 @@ class SymbolicSGD(torch.optim.Optimizer):
 
                     try:
                         result = subprocess.run(
-                            ["patch", "--no-backup-if-mismatch", "-i", patch_path, param_file],
+                            ["patch", "--no-backup-if-mismatch", "--fuzz=3", "-i", patch_path, param_file],
                             capture_output=True, text=True,
                         )
                         if result.returncode != 0:

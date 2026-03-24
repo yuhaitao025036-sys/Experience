@@ -43,7 +43,8 @@ step :=
     <- ($grad_storage_root_dir str <- $grad.st_relative_to <- $grad.st_tensor_uid)
     <- ($param_elem_file_ralative_path str <- $param_storage_root_dir <- $storage_elem_file_ralative_path)
     <- ($grad_elem_file_ralative_path str <- $grad_storage_root_dir <- $storage_elem_file_ralative_path)
-    <- (void <- '''patch -i {grad_elem_file_ralative_path} {param_elem_file_ralative_path}''')
+    <- (void <- remove_rej_file <- f"{param_elem_file_ralative_path}.rej")
+    <- (void <- '''patch --no-backup-if-mismatch --fuzz=3 -i {grad_elem_file_ralative_path} {param_elem_file_ralative_path}''')
 
 
 zero_grad :=
