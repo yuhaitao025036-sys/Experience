@@ -8,6 +8,7 @@ from typing import Any, List, Tuple, Union
 from symbolic_tensor.tensor_util.todo_tensor_like import todo_tensor_like
 from symbolic_tensor.tensor_util.empty_tensor_like import empty_tensor_like
 from symbolic_tensor.tensor_util.assign_tensor import assign_tensor
+from symbolic_tensor.tensor_util.get_diff_tensor import get_diff_tensor
 from symbolic_tensor.tensor_util.slice_view import slice_view
 from symbolic_tensor.tensor_util.slice_tensor import slice_tensor
 from symbolic_tensor.tensor_util.dump_view import dump_view
@@ -166,32 +167,6 @@ def _build_nested_result(flat_results: List[Any], shape: List[int]) -> Any:
     ]
 
 
-def _copy_back_to_storage_view(mutable_dir: str, view_tensor: torch.Tensor) -> None:
-    """Copy LLM results from mutable workspace dir back through view tensor's symlinks."""
-    coords_list = [list(coord) for coord in itertools.product(*[range(s) for s in view_tensor.size()])]
-    for coords in coords_list:
-        flat_index = sum(c * s for c, s in zip(coords, view_tensor.stride()))
-        digits = list(str(flat_index))
-        view_storage_path = os.path.join(
-            view_tensor.st_relative_to,
-            view_tensor.st_tensor_uid,
-            "storage",
-            os.path.join(*digits),
-            "data",
-        )
-        real_storage_path = os.path.realpath(view_storage_path)
-        if coords:
-            coord_dirs = os.path.join(*[str(c) for c in coords])
-            mutable_file = os.path.join(mutable_dir, coord_dirs, "data.txt")
-        else:
-            mutable_file = os.path.join(mutable_dir, "data.txt")
-        if os.path.isfile(mutable_file):
-            with open(mutable_file, "r", encoding="utf-8") as f:
-                content = f.read()
-            with open(real_storage_path, "w", encoding="utf-8") as f:
-                f.write(content)
-
-
 def symbolic_transform_backward_grad_input(
     grad_output: torch.Tensor,
     input: torch.Tensor,
@@ -260,25 +235,22 @@ def symbolic_transform_backward_grad_input(
             f"{forward_prompt}\n\n"
             "During forward pass, the input was translated to output using experience entries.\n"
             "Now given the output gradient (how output should change), compute gradients for\n"
-            "input.\n\n"
+            "input and experience.\n\n"
             "Context (read-only):\n"
             f"- Output gradient (text diff): \"{grad_output_view_dir}\"\n"
             f"- Original input: \"{input_view_dir}\"\n"
             f"- Original output: \"{output_view_dir}\"\n"
             f"- Experience entries used during forward: \"{experience_view_dir}\"\n"
             "  where .../0/data.xxx = query, .../1/data.xxx = key, .../2/data.xxx = value\n"
-            "  Each line in query files only contains one summary key word for current experience,\n"
-            "  which is used for calculating similarity between inputs and experience.\n"
-            "  Key files contain source domain semantics.\n"
-            "  Value files contain target domain semantics.\n\n"
-            f"Compute and write:\n"
+            "- Each line in query files only contains one summary key word for current experience.\n"
+            "  which used for calculate similarity between inputs and experience.\n"
+            "- Key files contain source domain semantics.\n"
+            "- Value files contain target domain semantics.\n\n"
+            "Compute and write:\n"
             f"1. Input gradient in \"{grad_input_dir}\":\n"
-            "   How should the input text change to improve the output?\n\n"
-            "Replace all TODO with computed Gradient files.\n\n"
-            "Gradient files format:\n"
-            "1. Gradient files must be like output of `diff -u --label data --label data original.txt modified.txt`.\n"
-            "2. Gradient files will be applied by cmd `patch -i backward.diff /forward/location/data`\n"
-            f"3. Gradient files of \"{grad_input_dir}/<xxx>/data\" must be able to be applied to \"{input_view_dir}/<xxx>/data\"\n"
+            "   How should the input text change to improve the output?\n"
+            f"2. File \"{grad_input_dir}/<xxx>/data\" must be a better version of \"{input_view_dir}/<xxx>/data\"\n\n"
+            "Replace all TODO with source semantic files.\n"
         )
 
         agent_task = AgentTask(
@@ -287,15 +259,16 @@ def symbolic_transform_backward_grad_input(
             prompt=prompt,
         )
         all_tasks.append(agent_task)
-        task_contexts.append((workspace_dir, grad_input_dir, scalar_grad_input_view))
+        task_contexts.append((workspace_dir, scalar_grad_input_view, scalar_grad_input_value))
 
     # Batch LLM call
     if all_tasks:
         TaskHandler()(all_tasks, llm_method)
 
-    # Copy results back and clean up
-    for workspace_dir, grad_input_dir, scalar_grad_input_view in task_contexts:
-        _copy_back_to_storage_view(grad_input_dir, scalar_grad_input_view)
+    # Compute diff between view (original) and value (LLM-written), assign diff back to view
+    for workspace_dir, scalar_grad_input_view, scalar_grad_input_value in task_contexts:
+        diff = get_diff_tensor(scalar_grad_input_view, scalar_grad_input_value)
+        assign_tensor(scalar_grad_input_view, diff)
         shutil.rmtree(workspace_dir)
 
     return grad_input
@@ -400,27 +373,23 @@ def symbolic_transform_backward_grad_experience(
                 f"{forward_prompt}\n\n"
                 "During forward pass, the input was translated to output using experience entries.\n"
                 "Now given the output gradient (how output should change), compute gradients for\n"
-                "experience.\n\n"
+                "input and experience.\n\n"
                 "Context (read-only):\n"
                 f"- Output gradient (text diff): \"{grad_output_view_dir}\"\n"
                 f"- Original input: \"{input_view_dir}\"\n"
                 f"- Original output: \"{output_view_dir}\"\n"
                 f"- Experience entries used during forward: \"{experience_view_dir}\"\n"
                 "  where .../0/data.xxx = query, .../1/data.xxx = key, .../2/data.xxx = value\n"
-                "  Each line in query files only contains one summary key word for current experience,\n"
-                "  which is used for calculating similarity between inputs and experience.\n"
-                "  Key files contain source domain semantics.\n"
-                "  Value files contain target domain semantics.\n\n"
-                f"Compute and write:\n"
+                "- Each line in query files only contains one summary key word for current experience.\n"
+                "  which used for calculate similarity between inputs and experience.\n"
+                "- Key files contain source domain semantics.\n"
+                "- Value files contain target domain semantics.\n\n"
+                "Compute and write:\n"
                 f"1. Experience gradients in \"{grad_experience_dir}\":\n"
                 "   How should each experience entry (query, key, value) change to improve the output?\n"
-                "   Notice, there maybe be multiple grad_output. You should merge them into grad_experience.\n\n"
-                "Replace all TODO with computed Gradient files.\n\n"
-                "Gradient files format:\n"
-                "1. Gradient files must be like output of `diff -u --label data --label data original.txt modified.txt`.\n"
-                "2. Gradient files will be applied by cmd `patch -i backward.diff /forward/location/data`\n"
-                f"3. Gradient files of \"{grad_experience_dir}/<xxx>/data\" must be able to be applied to \"{experience_view_dir}/<xxx>/data\"\n\n"
-                "NOTICE: All files MUST end with a newline. NEVER include '\\ No newline at end of file' in diff output.\n\n"
+                "   Notice, there maybe be multiple grad_output. You should merge them into grad_experience.\n"
+                f"2. File \"{grad_experience_dir}/<xxx>/data\" must be a better version of \"{experience_view_dir}/<xxx>/data\"\n\n"
+                f"Replace all TODO with experience {grad_exp_type['name']} semantic files.\n\n"
                 f"{prompt_suffix}"
             )
 
@@ -430,15 +399,16 @@ def symbolic_transform_backward_grad_experience(
                 prompt=prompt,
             )
             all_tasks.append(agent_task)
-            task_contexts.append((workspace_dir, grad_experience_dir, grad_experience_sliced_view))
+            task_contexts.append((workspace_dir, grad_experience_sliced_view, grad_experience_sliced_value))
 
     # Batch LLM call
     if all_tasks:
         TaskHandler()(all_tasks, llm_method)
 
-    # Copy results back and clean up
-    for workspace_dir, grad_experience_dir, grad_experience_sliced_view in task_contexts:
-        _copy_back_to_storage_view(grad_experience_dir, grad_experience_sliced_view)
+    # Compute diff between view (original) and value (LLM-written), assign diff back to view
+    for workspace_dir, grad_experience_sliced_view, grad_experience_sliced_value in task_contexts:
+        diff = get_diff_tensor(grad_experience_sliced_view, grad_experience_sliced_value)
+        assign_tensor(grad_experience_sliced_view, diff)
         shutil.rmtree(workspace_dir)
 
     return grad_experience
@@ -650,9 +620,9 @@ if __name__ == "__main__":
         run_test("grad_input shape matches input", list(grad_input.shape) == list(input_tensor.shape))
         run_test("grad_experience shape matches experience", list(grad_experience.shape) == list(exp_tensor.shape))
 
-        # Check grad_input text diff
+        # Check grad_input text diff (contains unified diff with --- / +++ headers)
         gi_text = read_storage(grad_input, 0)
-        run_test("grad_input text diff not TODO", "TODO" not in gi_text)
+        run_test("grad_input is unified diff", "---" in gi_text and "+++" in gi_text)
         print(f"  grad_input text: {repr(gi_text[:120])}")
 
         # Check grad_experience text diffs
