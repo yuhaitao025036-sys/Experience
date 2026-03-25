@@ -1,0 +1,5 @@
+factorial :=
+    int
+    <- $n int
+    # inline
+    <- Match[$n <= 1 -> 1, _ -> $n * factorial($n - 1)]

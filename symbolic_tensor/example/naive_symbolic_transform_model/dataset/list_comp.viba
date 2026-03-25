@@ -1,0 +1,5 @@
+squares :=
+    list[$sq int]
+    <- $nums list[int]
+    # inline
+    <- (list[$sq <- $x * $x] <- $nums list[$x int])

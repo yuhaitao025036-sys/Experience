@@ -1,0 +1,5 @@
+make_adder :=
+    $adder (int <- int)
+    <- $x int
+    # inline
+    <- ($adder <- ($result int <- $y int <- ($result <- $x + $y)))

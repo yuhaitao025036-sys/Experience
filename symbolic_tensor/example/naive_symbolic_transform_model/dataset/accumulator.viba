@@ -1,0 +1,6 @@
+total :=
+    $acc int
+    <- $nums list[int]
+    # inline
+    <- ($acc <- 0)
+    <- (list[void <- ($acc <- $acc + $n)] <- $nums list[$n int])

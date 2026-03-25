@@ -1,0 +1,6 @@
+describe :=
+    $msg str
+    <- $name str
+    <- $age int
+    # inline
+    <- ($msg <- $name + ' is ' + str($age) + ' years old')

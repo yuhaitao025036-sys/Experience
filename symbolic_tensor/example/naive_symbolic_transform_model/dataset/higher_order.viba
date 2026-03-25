@@ -1,0 +1,7 @@
+apply_twice :=
+    $result int
+    <- $f (int <- int)
+    <- $x int
+    # inline
+    <- ($first <- $f <- $x)
+    <- ($result <- $f <- $first)

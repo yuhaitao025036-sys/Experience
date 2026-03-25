@@ -1,0 +1,6 @@
+make_pair :=
+    $pair dict[str, str]
+    <- $a str
+    <- $b str
+    # inline
+    <- ($pair <- dict['first' = $a, 'second' = $b])

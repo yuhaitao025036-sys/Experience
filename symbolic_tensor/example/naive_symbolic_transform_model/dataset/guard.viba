@@ -1,0 +1,6 @@
+safe_div :=
+    float
+    <- $a float
+    <- $b float
+    # inline
+    <- Match[$b == 0 -> 0.0, _ -> $a / $b]

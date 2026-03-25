@@ -61,6 +61,15 @@ def main():
             ("seq.py", "seq.viba"),
             ("branch.py", "branch.viba"),
             ("loop.py", "loop.viba"),
+            ("recursion.py", "recursion.viba"),
+            ("higher_order.py", "higher_order.viba"),
+            ("data_struct.py", "data_struct.viba"),
+            ("default_arg.py", "default_arg.viba"),
+            ("list_comp.py", "list_comp.viba"),
+            ("format_str.py", "format_str.viba"),
+            ("guard.py", "guard.viba"),
+            ("accumulator.py", "accumulator.viba"),
+            ("closure.py", "closure.viba"),
         ]
 
         py_paths = []

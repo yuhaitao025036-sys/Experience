@@ -1,0 +1,6 @@
+repeat :=
+    $result str
+    <- $text str
+    <- $n int # default 3
+    # inline
+    <- ($result <- $text * $n)
