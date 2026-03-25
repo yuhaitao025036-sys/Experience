@@ -1,7 +1,7 @@
 import os
 import torch
 
-from experience.symbolic_tensor.llm_client.pack_dir import pack_dir
+from experience.fs_util.pack_dir import pack_dir
 
 
 def pack_tensor(tensor: torch.Tensor) -> str:

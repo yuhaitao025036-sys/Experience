@@ -1,6 +1,6 @@
-from experience.symbolic_tensor.llm_client.agent_task import AgentTask
-from experience.symbolic_tensor.llm_client.coding_agent_task_handler import CodingAgentTaskHandler
-from experience.symbolic_tensor.llm_client.raw_llm_task_handler import RawLlmTaskHandler
+from experience.llm_client.agent_task import AgentTask
+from experience.llm_client.coding_agent_task_handler import CodingAgentTaskHandler
+from experience.llm_client.raw_llm_task_handler import RawLlmTaskHandler
 import time
 import sys
 

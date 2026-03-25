@@ -1,5 +1,5 @@
 
-AgentTask Import[experience/symbolic_tensor/llm_client/agent_task.viba]
+AgentTask Import[experience/llm_client/agent_task.viba]
 
 RawLlmTaskHandler :=
     # __call__
@@ -10,7 +10,7 @@ RawLlmTaskHandler :=
     # inline
     <- (($workspace_dir, $prompt, $output_relative_dir_or_list, $todo_file_content_hint) <- $agent_task)
     <- ($packed_workspace str
-        <- Import[experience/symbolic_tensor/llm_client/pack_dir.viba]
+        <- Import[experience/fs_util/pack_dir.viba]
         <- $workspace_dir)
     <- (list[$output_relative_dir str] <- $output_relative_dir_or_list)
     <- (OutputFilesList[$todo_file_path str]
@@ -19,7 +19,7 @@ RawLlmTaskHandler :=
         <- $todo_file_content_hint)
     <- ($raw_llm_prompt str
         <- f"{prompt}\n\nThe Directories are packed as following like repomix:\n\n{packed_workspace}\n\nThe whole task are split into several pieces, One LLMs request for one piece, In This request, Your output will replace the {todo_file_content_hint} placeholder in file {todo_file_path}. \nDo not generate unrelated content.")
-    <- $raw_llm_query Import[experience/symbolic_tensor/llm_client/raw_llm_query.py]
+    <- $raw_llm_query Import[experience/llm_client/raw_llm_query.py]
     <- $async_do_for_one_batch (
         str
         <- $raw_llm_query

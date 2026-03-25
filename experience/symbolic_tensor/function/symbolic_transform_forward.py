@@ -11,8 +11,8 @@ from experience.symbolic_tensor.tensor_util.slice_tensor import slice_tensor
 from experience.symbolic_tensor.tensor_util.dump_view import dump_view
 from experience.symbolic_tensor.function.get_input_query_tensor import get_input_query_tensor
 from experience.symbolic_tensor.function.select_qkv_indexes import select_qkv_indexes
-from experience.symbolic_tensor.llm_client.agent_task import AgentTask
-from experience.symbolic_tensor.llm_client.task_handler import TaskHandler
+from experience.llm_client.agent_task import AgentTask
+from experience.llm_client.task_handler import TaskHandler
 
 
 def _scalar_slice_indices(shape: torch.Size) -> List[List[int]]:

@@ -2,8 +2,8 @@ import os
 import asyncio
 from typing import List
 
-from experience.symbolic_tensor.llm_client.agent_task import AgentTask
-from experience.symbolic_tensor.llm_client.coding_agent_query import coding_agent_query
+from experience.llm_client.agent_task import AgentTask
+from experience.llm_client.coding_agent_query import coding_agent_query
 
 
 def _flatten_nested(nested) -> list:

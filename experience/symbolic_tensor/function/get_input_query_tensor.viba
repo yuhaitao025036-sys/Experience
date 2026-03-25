@@ -23,7 +23,7 @@ get_input_query_tensor :=
     ''')
     <- ($agent_task AgentTask <- $tmp_dir <- "mutable_output_dir" <- $prompt)
     <- ($all_tasks <- sole_element_list <- $agent_task)
-    <- (void <- Import[experience/symbolic_tensor/llm_client/task_handler.viba] <- $all_tasks <- $llm_method)
+    <- (void <- Import[experience/llm_client/task_handler.viba] <- $all_tasks <- $llm_method)
     # copy back: LLM Write tool replaces symlinks with regular files,
     # so read from view files and write back to tensor storage.
     <- (void <- copy_back_to_storage_view <- f"{tmp_dir}/mutable_output_dir" <- $output)

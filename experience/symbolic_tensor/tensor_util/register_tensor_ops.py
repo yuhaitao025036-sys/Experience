@@ -26,7 +26,7 @@ def st_patch(lvalue, rvalue):
 torch.Tensor.st_patch = st_patch
 
 def st_file_paths(tensor):
-    from experience.symbolic_tensor.fs_util.get_nested_list_file_pathes import get_nested_list_file_pathes
+    from experience.fs_util.get_nested_list_file_pathes import get_nested_list_file_pathes
     return get_nested_list_file_pathes(tensor)
 
 torch.Tensor.st_file_paths = st_file_paths

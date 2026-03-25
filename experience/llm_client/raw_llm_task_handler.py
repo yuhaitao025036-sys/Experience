@@ -2,8 +2,8 @@ import os
 import asyncio
 from typing import List
 
-from experience.symbolic_tensor.llm_client.agent_task import AgentTask
-from experience.symbolic_tensor.llm_client.pack_dir import pack_dir
+from experience.llm_client.agent_task import AgentTask
+from experience.fs_util.pack_dir import pack_dir
 
 
 def _flatten_nested(nested) -> list:
@@ -69,7 +69,7 @@ class RawLlmTaskHandler:
                     jobs.append((todo_file_path, raw_llm_prompt))
 
         async def _do_one(todo_file_path: str, raw_llm_prompt: str):
-            from experience.symbolic_tensor.llm_client.raw_llm_query import raw_llm_query
+            from experience.llm_client.raw_llm_query import raw_llm_query
             output_content = await raw_llm_query(raw_llm_prompt)
             with open(todo_file_path, "w", encoding="utf-8") as f:
                 f.write(output_content)

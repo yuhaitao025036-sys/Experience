@@ -9,7 +9,7 @@ from typing import Callable, List, Optional, Union
 from experience.symbolic_tensor.function import symbolic_grad_registry
 from experience.symbolic_tensor.tensor_util.slice_view import slice_view
 from experience.symbolic_tensor.tensor_util.patch_tensor import patch_tensor
-from experience.symbolic_tensor.fs_util.get_nested_list_file_pathes import get_nested_list_file_pathes
+from experience.fs_util.get_nested_list_file_pathes import get_nested_list_file_pathes
 
 
 def _scalar_slice_indices(shape: torch.Size) -> List[List[int]]:

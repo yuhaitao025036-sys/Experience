@@ -14,7 +14,7 @@ import torch
 from experience.symbolic_tensor.tensor_util.make_tensor import make_tensor
 from experience.symbolic_tensor.function.get_edit_distance_ratio import get_edit_distance_ratio
 from experience.symbolic_tensor.optimizer.symbolic_sgd import SymbolicSGD
-from experience.symbolic_tensor.example.naive_symbolic_transform_model.model import NaiveModel
+from experience.example.naive_symbolic_transform_model.model import NaiveModel
 from experience.symbolic_tensor.function import symbolic_grad_registry
 
 # Source anthropic env vars

@@ -99,7 +99,7 @@ symbolic_transform_backward_grad_input :=
     ''')
     <- ($agent_task AgentTask <- $workspace_dir <- "mutable_grad_input_dir" <- $prompt)
     <- ($all_tasks <- NestedList[$agent_task])
-    <- (void <- Import[experience/symbolic_tensor/llm_client/task_handler.viba] <- $all_tasks <- $llm_method)
+    <- (void <- Import[experience/llm_client/task_handler.viba] <- $all_tasks <- $llm_method)
     <- ($diff
         <- $scalar_input.st_get_diff
         <- $scalar_grad_input_value)
@@ -131,8 +131,8 @@ symbolic_transform_backward_grad_experience :=
     <- ($selected_experience_qkv_indexes_list <- NestedList[$padded_select_indexes])
     <- (list[$sole_grad_experience_point list[torch.Tensor[Index]],
              $multi_grad_output_points list[torch.Tensor[Index]]]
-        <- Import[experience/symbolic_tensor/sparse_util/transpose_pairs_coordinates.viba]
-        <- Import[experience/symbolic_tensor/sparse_util/convert_nested_list_coordinates_to_pairs_coordinates.viba]
+        <- Import[experience/sparse_util/transpose_pairs_coordinates.viba]
+        <- Import[experience/sparse_util/convert_nested_list_coordinates_to_pairs_coordinates.viba]
         <- $selected_experience_qkv_indexes_list)
     <- (GradExprTypeList[$grad_exp_type GradExpType] <- [GradKey, GradValue])
     <- (PromptSuffix[GradKey] = '''
@@ -221,13 +221,13 @@ symbolic_transform_backward_grad_experience :=
     ''')
     <- ($agent_task AgentTask <- $workspace_dir <- "mutable_grad_experience_dir" <- $prompt)
     <- ($all_tasks <- list[GradExprTypeList[$agent_task]])
-    <- (void <- Import[experience/symbolic_tensor/llm_client/task_handler.viba] <- $all_tasks <- $llm_method)
+    <- (void <- Import[experience/llm_client/task_handler.viba] <- $all_tasks <- $llm_method)
     <- ($diff
         <- $experience_sliced_view.st_get_diff
         <- $grad_experience_sliced_value)
     <- (void <- $grad_experience_sliced_view.st_assign <- $diff)
 
-AgentTask := Import[experience/symbolic_tensor/llm_client/agent_task.viba]
+AgentTask := Import[experience/llm_client/agent_task.viba]
 
 
 # be carefull there claude code instance called in coding_agent_query.

@@ -12,12 +12,12 @@ from experience.symbolic_tensor.tensor_util.get_diff_tensor import get_diff_tens
 from experience.symbolic_tensor.tensor_util.slice_view import slice_view
 from experience.symbolic_tensor.tensor_util.slice_tensor import slice_tensor
 from experience.symbolic_tensor.tensor_util.dump_view import dump_view
-from experience.symbolic_tensor.llm_client.agent_task import AgentTask
-from experience.symbolic_tensor.llm_client.task_handler import TaskHandler
-from experience.symbolic_tensor.sparse_util.convert_nested_list_coordinates_to_pairs_coordinates import (
+from experience.llm_client.agent_task import AgentTask
+from experience.llm_client.task_handler import TaskHandler
+from experience.sparse_util.convert_nested_list_coordinates_to_pairs_coordinates import (
     convert_nested_list_coordinates_to_pairs_coordinates,
 )
-from experience.symbolic_tensor.sparse_util.transpose_pairs_coordinates import (
+from experience.sparse_util.transpose_pairs_coordinates import (
     transpose_pairs_coordinates,
 )
 

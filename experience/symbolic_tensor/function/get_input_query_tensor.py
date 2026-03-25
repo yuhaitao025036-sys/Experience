@@ -6,8 +6,8 @@ import torch
 from experience.symbolic_tensor.tensor_util.todo_tensor_like import todo_tensor_like
 from experience.symbolic_tensor.tensor_util.slice_tensor import slice_tensor
 from experience.symbolic_tensor.tensor_util.dump_view import dump_view
-from experience.symbolic_tensor.llm_client.agent_task import AgentTask
-from experience.symbolic_tensor.llm_client.task_handler import TaskHandler
+from experience.llm_client.agent_task import AgentTask
+from experience.llm_client.task_handler import TaskHandler
 
 
 def _copy_back_to_storage_view(mutable_dir: str, output: torch.Tensor) -> None:

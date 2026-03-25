@@ -172,7 +172,7 @@ if __name__ == "__main__":
 
     # Test 7: Round-trip with convert_nested_list_coordinates_to_pairs_coordinates
     print("Test 7: Integration with convert_nested_list_coordinates_to_pairs_coordinates")
-    from experience.symbolic_tensor.sparse_util.convert_nested_list_coordinates_to_pairs_coordinates import (
+    from experience.sparse_util.convert_nested_list_coordinates_to_pairs_coordinates import (
         convert_nested_list_coordinates_to_pairs_coordinates,
     )
     # Simulate selected_experience_indexes: 2 inputs, each selecting from experience
