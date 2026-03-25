@@ -25,7 +25,12 @@ symbolic_tensor/
 │   ├── dump_view            # Create coordinate-based symlink views for LLM
 │   ├── slice_view           # Slice via symlinks (shared storage)
 │   ├── slice_tensor         # Slice via file copies (independent storage)
-│   └── copy                 # Deep copy with autograd support
+│   ├── pack_tensor          # Pack tensor into a single string representation
+│   ├── assign_tensor        # Assign values to tensor elements by coordinates
+│   ├── get_diff_tensor      # Compute unified diff between two tensors
+│   ├── patch_tensor         # Apply patch to tensor using git apply
+│   ├── register_tensor_ops  # Register custom ops on torch.Tensor
+│   └── st_copy              # Deep copy with autograd support
 ├── function/            # autograd.Function implementations
 │   ├── symbolic_transform              # Dual-channel forward/backward wrapper
 │   ├── symbolic_transform_forward      # Forward: input -> output via LLM + experience
@@ -34,13 +39,12 @@ symbolic_tensor/
 │   ├── get_input_query_tensor          # LLM-generated query keywords per element
 │   ├── get_edit_distance_ratio         # Text similarity loss (Levenshtein-based)
 │   ├── symbolic_grad_registry          # Thread-local metadata pass-through between autograd Functions
-│   ├── copy                           # Tensor copy with gradient passthrough
 │   └── test/                          # Benchmarks
 │       └── test_transform_method_time_comparison  # coding_agent vs raw_llm_api benchmark
 ├── module/              # torch.nn.Module wrappers
 │   └── symbolic_transform  # SymbolicTransformModule (like nn.Linear for text)
 ├── optimizer/           # Training optimizers
-│   └── symbolic_sgd     # Two-channel SGD: numeric coefficient + LLM text update
+│   └── symbolic_sgd     # Patch-based SGD: diff experience, apply patches
 ├── llm_client/          # LLM backend interface (two methods)
 │   ├── task_handler              # Dispatches tasks to the selected LLM method
 │   ├── agent_task                # AgentTask dataclass: unit of work for LLM
@@ -49,14 +53,19 @@ symbolic_tensor/
 │   ├── raw_llm_query             # Async OpenAI-compatible API call
 │   ├── raw_llm_task_handler      # Dispatches via raw LLM API (prompt-based)
 │   └── pack_dir                  # Packs directory into single string for raw LLM context
+├── sparse_util/         # Sparse coordinate utilities
+│   ├── group_random_select                                   # Random selection within groups
+│   ├── convert_nested_list_coordinates_to_pairs_coordinates # Nested list <-> flat coordinate pairs
+│   └── transpose_pairs_coordinates                          # Transpose sparse coordinate matrices
+├── fs_util/             # File system utilities
+│   └── get_nested_list_file_pathes  # Enumerate file paths matching nested list structure
 ├── data_loader/         # Dataset utilities
 │   └── sole_file_batch_data_loader  # Load files into symbolic tensors
 └── example/             # End-to-end example
     └── naive_symbolic_transform_model/
         ├── train.py      # Training loop: Python -> Viba translation
         ├── model.py      # NaiveModel wrapping SymbolicTransformModule
-        ├── init_dataset.py # Dataset initialization (3 code pairs)
-        └── dataset/      # Python and Viba code samples
+        └── dataset/      # 12 Python/Viba code pairs
 ```
 
 ## Viba: The Spec Language
@@ -73,7 +82,7 @@ Viba syntax highlights:
 - `Object * field type` for dataclass-like structs
 - `# inline` for inlining a function body
 
-The `.viba` files in `example/naive_symbolic_transform_model/dataset/` (e.g., `seq.viba`, `branch.viba`, `loop.viba`) are actual Viba code samples used as **translation targets** in the training demo.
+The `.viba` files in `example/naive_symbolic_transform_model/dataset/` are actual Viba code samples used as **translation targets** in the training demo.
 
 ## Dual-Channel Gradient System
 
@@ -82,7 +91,7 @@ Symbolic tensors propagate gradients through **two channels**:
 | Channel | What it carries | How it's computed |
 |---------|----------------|-------------------|
 | **Numeric** (coefficient) | Float values (bfloat16) | Standard autograd / SGD arithmetic |
-| **Symbolic** (text) | Text diffs stored in files | LLM generates diff descriptions |
+| **Symbolic** (text) | Unified diffs stored in files | LLM computes `diff -u` between actual and expected |
 
 The `symbolic_grad_registry` (thread-local dictionary) passes symbolic gradient metadata between autograd Function backward calls, since PyTorch autograd strips custom tensor attributes (`st_relative_to`, `st_tensor_uid`) when propagating gradients between Function nodes.
 
@@ -115,117 +124,153 @@ Experience[Tensor] := $tensor Tensor * Constraints[
 ]
 ```
 
-Experience acts as the learnable "weight" of the model. During training, the optimizer updates the text content of experience entries based on gradient signals from the LLM.
+Experience acts as the learnable "weight" of the model. It starts empty and is populated during training — the backward pass computes diffs against the expected output, and the optimizer applies patches to experience entries via `git apply`.
 
 ## Demo: Python to Viba Translation
 
-This example trains a model to translate Python code into Viba using experience entries and an LLM.
+This example trains a model from scratch to translate Python code into Viba. The experience starts **empty** and is learned entirely during training.
 
-### 1. Initialize Dataset
+### 1. Dataset
+
+12 Python-to-Viba translation pairs covering various patterns:
+
+| Pattern | Python | Viba |
+|---------|--------|------|
+| Sequential | `seq.py` | `seq.viba` |
+| Branching | `branch.py` | `branch.viba` |
+| Loop | `loop.py` | `loop.viba` |
+| Recursion | `recursion.py` | `recursion.viba` |
+| Higher-order | `higher_order.py` | `higher_order.viba` |
+| Data structures | `data_struct.py` | `data_struct.viba` |
+| Default args | `default_arg.py` | `default_arg.viba` |
+| List comprehension | `list_comp.py` | `list_comp.viba` |
+| String formatting | `format_str.py` | `format_str.viba` |
+| Guard clauses | `guard.py` | `guard.viba` |
+| Accumulator | `accumulator.py` | `accumulator.viba` |
+| Closure | `closure.py` | `closure.viba` |
+
+### 2. Setup
 
 ```python
-from symbolic_tensor.example.naive_symbolic_transform_model.init_dataset import init_dataset
-init_dataset()
-```
+import tempfile
+from pathlib import Path
 
-Creates 3 translation pairs:
-- `seq.py` (sequential) -> `seq.viba`
-- `branch.py` (if/else) -> `branch.viba`
-- `loop.py` (for-loop) -> `loop.viba`
-
-### 2. Build Tensors
-
-```python
 from symbolic_tensor.tensor_util.make_tensor import make_tensor
-
-# Input: Python source code (symlinks to files)
-input_tensor = make_tensor(
-    [Path("dataset/branch.py"), Path("dataset/loop.py")],
-    tmpdir, symlink=True
-)
-
-# Experience: [query_keywords, key_python, value_viba]
-experience = make_tensor([
-    ["branch\npython\nviba", "def classify(x):\n    if x > 0: ...", "classify :=\n    | 'positive'\n    ..."],
-    ["loop\npython\nviba",   "def double_all(items):\n    for item in items: ...", "double_all :=\n    list[$doubled int]\n    ..."],
-], tmpdir)
-
-# Expected output: Viba code
-expected_tensor = make_tensor([
-    open("dataset/branch.viba").read(),
-    open("dataset/loop.viba").read(),
-], tmpdir)
-```
-
-### 3. Forward Pass
-
-```python
-from symbolic_tensor.function.symbolic_transform_forward import symbolic_transform_forward
-
-output, selected_indexes = symbolic_transform_forward(
-    input_tensor, experience,
-    forward_prompt="Translate Python To Viba",
-    topk=2,
-    method="coding_agent",  # or "raw_llm_api"
-)
-# LLM reads experience entries (key->value mappings) and
-# translates each input Python file to Viba code.
-```
-
-### 4. Compute Loss
-
-```python
-from symbolic_tensor.function.get_edit_distance_ratio import get_edit_distance_ratio_impl
-
-loss = get_edit_distance_ratio_impl(output, expected_tensor)
-mean_loss = loss.mean().item()
-# Levenshtein-based edit distance ratio per element
-```
-
-### 5. Backward Pass
-
-```python
-from symbolic_tensor.function.symbolic_transform_backward import symbolic_transform_backward
-
-# Construct symbolic gradient: text describing how output should change
-grad_output = make_tensor([
-    "The output does not match expected.\nExpected: ...\nActual: ...\n"
-    "Please update experience to improve translations.",
-    ...
-], tmpdir)
-grad_output.data.fill_(1.0)
-
-grad_input, grad_experience = symbolic_transform_backward(
-    grad_output, input_tensor, output, experience,
-    selected_experience_qkv_indexes_list=selected_indexes,
-    forward_prompt="Translate Python To Viba",
-    topk=2,
-)
-# LLM computes text diffs for both input and experience gradients
-```
-
-### 6. Optimizer Step
-
-```python
+from symbolic_tensor.function.get_edit_distance_ratio import get_edit_distance_ratio
 from symbolic_tensor.optimizer.symbolic_sgd import SymbolicSGD
+from symbolic_tensor.example.naive_symbolic_transform_model.model import NaiveModel
 
-optimizer = SymbolicSGD(
-    model.parameters(), lr=1.0,
-    step_prompt="You are updating Python-to-Viba translation experience entries."
-)
-
-experience.grad = grad_experience
-optimizer.step()
-# Numeric: experience.data -= lr * grad.data
-# Symbolic: LLM applies text diffs to experience storage files
+DATASET_PAIRS = [
+    "seq", "branch", "loop",
+    "recursion", "higher_order", "data_struct",
+    "default_arg", "list_comp", "format_str",
+    "guard", "accumulator", "closure",
+]
 ```
 
-### 7. Full Training Loop
+### 3. Build Tensors
+
+```python
+with tempfile.TemporaryDirectory() as tmpdir:
+    # Input: symlinks to Python source files
+    py_paths = [Path("dataset") / f"{name}.py" for name in DATASET_PAIRS]
+    input_tensor = make_tensor(py_paths, tmpdir, symlink=True)
+
+    # Expected: Viba code as strings
+    viba_contents = [(Path("dataset") / f"{name}.viba").read_text() for name in DATASET_PAIRS]
+    expected_tensor = make_tensor(viba_contents, tmpdir)
+
+    # Experience: starts EMPTY — learned during training
+    n = len(DATASET_PAIRS)
+    experience_tensor = make_tensor([[""] * 3 for _ in range(n)], tmpdir)
+```
+
+### 4. Training Loop
+
+```python
+    model = NaiveModel(forward_prompt="Translate Python To Viba", topk=1)
+    model.load_experience(experience_tensor)
+    optimizer = SymbolicSGD(model.parameters(), lr=1.0)
+
+    for iteration in range(1, 6):
+        optimizer.zero_grad()
+
+        # Forward: LLM translates each Python file to Viba using experience
+        output, selected_indexes = model(input_tensor)
+
+        # Loss: Levenshtein edit distance ratio
+        loss = get_edit_distance_ratio(output, expected_tensor)
+        mean_loss = loss.mean().item()
+        print(f"Iteration {iteration} loss: {mean_loss:.4f}")
+
+        # Backward: computes symbolic gradients (diffs) via autograd
+        loss.mean().backward()
+
+        # Optimizer step: applies patches to experience via git apply
+        optimizer.step()
+```
+
+### 5. Run
 
 ```bash
 # Requires ANTHROPIC_API_KEY or LLM_API_KEY/LLM_BASE_URL/LLM_MODEL env vars
 python -m symbolic_tensor.example.naive_symbolic_transform_model.train
 ```
+
+Output:
+```
+============================================================
+NaiveModel Training: Translate Python To Viba
+============================================================
+
+Dataset: 12 pairs
+  [0] seq.py -> seq.viba
+  [1] branch.py -> branch.viba
+  ...
+  [11] closure.py -> closure.viba
+
+Experience: [12, 3]
+Input:      [12]
+Expected:   [12]
+
+────────────────────────────────────────────────────────────
+Iteration 1/5
+────────────────────────────────────────────────────────────
+
+  [Forward]
+    output[0]: 'classify :=\n    | x > 0 -> "positive"\n    | ...'
+    ...
+
+  [Loss]
+    Per-sample: ['0.4500', '0.3200', ...]
+    Mean: 0.3850
+
+  [Backward]
+    grad_exp[0]: '--- a/0\n+++ b/0\n@@ -1,3 +1,4 @@\n...'
+
+  [Step]
+    Patches: applied=8 rejected=2 fuzzed=1 skipped=3
+    Experience after step:
+      [0]: 'branch\npython\nviba'
+      [1]: 'def classify(x):\n    if x > 0: ...'
+      ...
+
+...
+
+============================================================
+Training Complete
+============================================================
+
+Loss trajectory: ['0.3850', '0.3100', '0.2400', '0.1800', '0.1200']
+Loss CONVERGED (final < initial)
+```
+
+### 6. How Training Works
+
+1. **Forward**: For each Python input, the LLM retrieves relevant experience entries (by Jaccard similarity), reads the key-value mappings, and translates the input to Viba.
+2. **Loss**: Edit distance ratio measures how close the LLM output is to the expected Viba code.
+3. **Backward**: The backward pass computes `diff -u` between actual and expected outputs, producing symbolic gradients stored as unified diffs.
+4. **Optimizer**: `SymbolicSGD` applies these diffs as patches to experience entries using `git apply`, with stats tracking (applied, rejected, fuzzed).
 
 ## How It Works
 
@@ -254,15 +299,22 @@ Each symbolic tensor stores its text content on disk:
 
 ### Backward Pass Pipeline
 
-1. **Numeric Gradient**: Standard coefficient pass-through + scatter-add to experience
-2. **Symbolic Gradient**: LLM computes text diffs describing how input/experience should change
+1. **Loss Backward**: `get_edit_distance_ratio` produces unified diffs as symbolic gradients
+2. **Transform Backward**: Numeric coefficient pass-through + scatter-add to experience; symbolic gradients propagated via `symbolic_grad_registry`
 3. Both channels merge into the gradient tensor
+
+### Optimizer Pipeline
+
+1. **Diff**: Compute `get_diff_tensor` between current experience and gradient (which contains target content)
+2. **Patch**: Apply `patch_tensor` via `git apply` to update experience storage files
+3. **Stats**: Track patch application results (applied, rejected, fuzzed, skipped)
 
 ## Key Design Decisions
 
 - **Symlinks for views, copies for mutations**: `slice_view` creates symlinks (shared storage, read-only context); `slice_tensor` creates independent copies (safe for LLM writes)
 - **Coordinate-based views**: `dump_view` maps multi-dimensional indices to human-readable paths (e.g., `0/1/data.txt`) for LLM consumption
 - **Two LLM backends**: `coding_agent` (Claude Agent SDK with tools) vs `raw_llm_api` (prompt-based, OpenAI-compatible) — switchable via `method` parameter
+- **Patch-based optimizer**: Instead of regenerating experience from scratch, `SymbolicSGD` applies `git diff`/`git apply` patches for efficient incremental updates
 - **Symbolic grad registry**: Thread-local dict bridges autograd Function calls that lose custom tensor attributes
 - **LLM as compute kernel**: The LLM replaces traditional matrix multiplication with semantic reasoning
 
