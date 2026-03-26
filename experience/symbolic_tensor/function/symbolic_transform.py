@@ -28,11 +28,12 @@ class SymbolicTransform(torch.autograd.Function):
         grad_input_prompt: Optional[Callable[..., str]] = None,
         grad_exp_key_prompt: Optional[Callable[..., str]] = None,
         grad_exp_value_prompt: Optional[Callable[..., str]] = None,
+        task_prompt: str = "",
         topk: int = 16,
         llm_method: str = "raw_llm_api",
     ) -> Tuple[torch.Tensor, Any]:
         output, selected_experience_qkv_indexes_list = symbolic_transform_forward(
-            input, experience, output_prompt, topk, llm_method=llm_method
+            input, experience, output_prompt, task_prompt, topk, llm_method=llm_method
         )
 
         # Save tensors for backward
@@ -50,6 +51,7 @@ class SymbolicTransform(torch.autograd.Function):
         ctx.grad_input_prompt = grad_input_prompt
         ctx.grad_exp_key_prompt = grad_exp_key_prompt
         ctx.grad_exp_value_prompt = grad_exp_value_prompt
+        ctx.task_prompt = task_prompt
         ctx.topk = topk
         ctx.llm_method = llm_method
 
@@ -85,6 +87,7 @@ class SymbolicTransform(torch.autograd.Function):
             ctx.grad_input_prompt,
             ctx.grad_exp_key_prompt,
             ctx.grad_exp_value_prompt,
+            ctx.task_prompt,
             ctx.topk,
             llm_method=ctx.llm_method,
         )
@@ -96,8 +99,8 @@ class SymbolicTransform(torch.autograd.Function):
         symbolic_grad_registry.register(experience.st_tensor_uid, grad_experience)
 
         # Return grads for (input, experience, output_prompt, grad_input_prompt,
-        #                    grad_exp_key_prompt, grad_exp_value_prompt, topk, llm_method)
-        return grad_input, grad_experience, None, None, None, None, None, None
+        #                    grad_exp_key_prompt, grad_exp_value_prompt, task_prompt, topk, llm_method)
+        return grad_input, grad_experience, None, None, None, None, None, None, None
 
 
 symbolic_transform = SymbolicTransform.apply

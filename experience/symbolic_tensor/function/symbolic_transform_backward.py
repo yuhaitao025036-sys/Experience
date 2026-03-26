@@ -168,6 +168,7 @@ def _build_nested_result(flat_results: List[Any], shape: List[int]) -> Any:
 
 
 def default_prompt_for_grad_input(
+    task_prompt: str,
     workspace_dir: str,
     const_grad_output_view: str,
     const_input_view: str,
@@ -178,6 +179,7 @@ def default_prompt_for_grad_input(
     """Default prompt for computing input gradient in backward pass."""
     return (
         "You are a symbolic gradient calculator for backward pass.\n\n"
+        f"{task_prompt}\n\n"
         "During forward pass, the input was translated to output using experience entries.\n"
         "Now given the output gradient (how output should change), compute gradients for\n"
         "input and experience.\n\n"
@@ -200,6 +202,7 @@ def default_prompt_for_grad_input(
 
 
 def default_prompt_for_grad_exp_key(
+    task_prompt: str,
     workspace_dir: str,
     const_grad_output_view: str,
     const_input_view: str,
@@ -210,6 +213,7 @@ def default_prompt_for_grad_exp_key(
     """Default prompt for computing experience key gradient in backward pass."""
     return (
         "You are a symbolic gradient calculator for backward pass.\n\n"
+        f"{task_prompt}\n\n"
         "During forward pass, the input was translated to output using experience entries.\n"
         "Now compute better experience entries to improve future translations.\n\n"
         "Context (read-only):\n"
@@ -237,6 +241,7 @@ def default_prompt_for_grad_exp_key(
 
 
 def default_prompt_for_grad_exp_value(
+    task_prompt: str,
     workspace_dir: str,
     const_grad_output_view: str,
     const_input_view: str,
@@ -247,6 +252,7 @@ def default_prompt_for_grad_exp_value(
     """Default prompt for computing experience value gradient in backward pass."""
     return (
         "You are a symbolic gradient calculator for backward pass.\n\n"
+        f"{task_prompt}\n\n"
         "During forward pass, the input was translated to output using experience entries.\n"
         "Now compute better experience entries to improve future translations.\n\n"
         "Context (read-only):\n"
@@ -280,6 +286,7 @@ def symbolic_transform_backward_grad_input(
     experience: torch.Tensor,
     selected_experience_qkv_indexes_list: Any,
     grad_input_prompt: Optional[Callable[..., str]] = None,
+    task_prompt: str = "",
     topk: int = 16,
     llm_method: str = "raw_llm_api",
 ) -> Union[torch.Tensor, None]:
@@ -337,7 +344,7 @@ def symbolic_transform_backward_grad_input(
         dump_view(scalar_grad_input_value, grad_input_dir, "txt")
 
         prompt = (grad_input_prompt or default_prompt_for_grad_input)(
-            workspace_dir, grad_output_view_dir, input_view_dir,
+            task_prompt, workspace_dir, grad_output_view_dir, input_view_dir,
             output_view_dir, experience_view_dir, grad_input_dir,
         )
 
@@ -371,6 +378,7 @@ def symbolic_transform_backward_grad_experience(
     selected_experience_qkv_indexes_list: Any,
     grad_exp_key_prompt: Optional[Callable[..., str]] = None,
     grad_exp_value_prompt: Optional[Callable[..., str]] = None,
+    task_prompt: str = "",
     topk: int = 16,
     llm_method: str = "raw_llm_api",
 ) -> torch.Tensor:
@@ -449,7 +457,7 @@ def symbolic_transform_backward_grad_experience(
             dump_view(grad_experience_sliced_value, grad_experience_dir, "txt")
 
             prompt = prompt_fn(
-                workspace_dir, grad_output_view_dir, input_view_dir,
+                task_prompt, workspace_dir, grad_output_view_dir, input_view_dir,
                 output_view_dir, experience_view_dir, grad_experience_dir,
             )
 
@@ -484,6 +492,7 @@ def symbolic_transform_backward(
     grad_input_prompt: Optional[Callable[..., str]] = None,
     grad_exp_key_prompt: Optional[Callable[..., str]] = None,
     grad_exp_value_prompt: Optional[Callable[..., str]] = None,
+    task_prompt: str = "",
     topk: int = 16,
     llm_method: str = "raw_llm_api",
 ) -> Tuple[Union[torch.Tensor, None], torch.Tensor]:
@@ -503,6 +512,7 @@ def symbolic_transform_backward(
         grad_input_prompt: Callable that builds the grad_input prompt. None uses default.
         grad_exp_key_prompt: Callable that builds the experience key gradient prompt. None uses default.
         grad_exp_value_prompt: Callable that builds the experience value gradient prompt. None uses default.
+        task_prompt: High-level task description (e.g. "Translate Python To Viba").
         topk: Number of top experience entries used per element.
         llm_method: LLM backend to use.
 
@@ -512,13 +522,13 @@ def symbolic_transform_backward(
     grad_input = symbolic_transform_backward_grad_input(
         grad_output, input, output, experience,
         selected_experience_qkv_indexes_list,
-        grad_input_prompt, topk, llm_method,
+        grad_input_prompt, task_prompt, topk, llm_method,
     )
 
     grad_experience = symbolic_transform_backward_grad_experience(
         grad_output, input, output, experience,
         selected_experience_qkv_indexes_list,
-        grad_exp_key_prompt, grad_exp_value_prompt, topk, llm_method,
+        grad_exp_key_prompt, grad_exp_value_prompt, task_prompt, topk, llm_method,
     )
 
     return grad_input, grad_experience

@@ -2,17 +2,18 @@
 # Prompt callables: each is a function that receives workspace dirs and returns a prompt string.
 # When None, the default is used.
 # Callable signature type alias for backward prompts:
-#   $func ($ret str <- $workspace_dir str <- $const_grad_output_view str <- $const_input_view str
+#   $func ($ret str <- $task_prompt str <- $workspace_dir str <- $const_grad_output_view str <- $const_input_view str
 #          <- $const_output_view str <- $const_experience_view str <- $mutable_dir str)
 
 # torch.autograd.Function backward signature:
 #   backward(ctx, grad_output, grad_selected_indexes=None)
 #     -> (grad_input, grad_experience, None*6)
 # ctx saves: input, output, experience, selected_experience_qkv_indexes_list,
-#            grad_input_prompt, grad_exp_key_prompt, grad_exp_value_prompt, topk
+#            grad_input_prompt, grad_exp_key_prompt, grad_exp_value_prompt, task_prompt, topk
 
 default_prompt_for_grad_input :=
     $prompt str
+    <- $task_prompt str
     <- $workspace_dir str
     <- $const_grad_output_view str
     <- $const_input_view str
@@ -22,6 +23,8 @@ default_prompt_for_grad_input :=
     # inline
     <- ($prompt <- '''
         You are a symbolic gradient calculator for backward pass.
+
+        f"{task_prompt}"
 
         During forward pass, the input was translated to output using experience entries.
         Now given the output gradient (how output should change), compute gradients for
@@ -48,6 +51,7 @@ default_prompt_for_grad_input :=
 
 default_prompt_for_grad_exp_key :=
     $prompt str
+    <- $task_prompt str
     <- $workspace_dir str
     <- $const_grad_output_view str
     <- $const_input_view str
@@ -57,6 +61,8 @@ default_prompt_for_grad_exp_key :=
     # inline
     <- ($prompt <- '''
         You are a symbolic gradient calculator for backward pass.
+
+        f"{task_prompt}"
 
         During forward pass, the input was translated to output using experience entries.
         Now compute better experience entries to improve future translations.
@@ -85,6 +91,7 @@ default_prompt_for_grad_exp_key :=
 
 default_prompt_for_grad_exp_value :=
     $prompt str
+    <- $task_prompt str
     <- $workspace_dir str
     <- $const_grad_output_view str
     <- $const_input_view str
@@ -94,6 +101,8 @@ default_prompt_for_grad_exp_value :=
     # inline
     <- ($prompt <- '''
         You are a symbolic gradient calculator for backward pass.
+
+        f"{task_prompt}"
 
         During forward pass, the input was translated to output using experience entries.
         Now compute better experience entries to improve future translations.
@@ -120,7 +129,7 @@ default_prompt_for_grad_exp_value :=
         Value content must be in the SAME language/format as the OUTPUT files (target domain).
     ''')
 
-BackwardPromptCallable := $func ($ret str <- $workspace_dir str <- $const_grad_output_view str <- $const_input_view str <- $const_output_view str <- $const_experience_view str <- $mutable_dir str)
+BackwardPromptCallable := $func ($ret str <- $task_prompt str <- $workspace_dir str <- $const_grad_output_view str <- $const_input_view str <- $const_output_view str <- $const_experience_view str <- $mutable_dir str)
 
 symbolic_transform_backward :=
     ($grad_input Symbolic[torch.Tensor], $grad_experience ExperienceTensor[Symbolic[torch.Tensor]])
@@ -133,6 +142,7 @@ symbolic_transform_backward :=
     <- $grad_input_prompt BackwardPromptCallable # default None
     <- $grad_exp_key_prompt BackwardPromptCallable # default None
     <- $grad_exp_value_prompt BackwardPromptCallable # default None
+    <- $task_prompt str # default ""
     <- $topk int # default 16
     <- $llm_method ("coding_agent" | "raw_llm_api") # default raw_llm_api
     <- ($grad_input <- symbolic_transform_backward_grad_input <- ... <- If[$input.requires_grad] <- Else[None])
@@ -147,6 +157,7 @@ symbolic_transform_backward_grad_input :=
     <- $experience ExperienceTensor[Symbolic[torch.Tensor]]
     <- $selected_experience_qkv_indexes_list NestedList[list[torch.Tensor[int]]]
     <- $grad_input_prompt BackwardPromptCallable # default None
+    <- $task_prompt str # default ""
     <- $topk int # default 16
     <- $llm_method ("coding_agent" | "raw_llm_api") # default raw_llm_api
     # inline
@@ -188,6 +199,7 @@ symbolic_transform_backward_grad_input :=
     # dump mutable views (LLM writes gradients here)
     <- (void <- $dump_view <- $scalar_grad_input_value <- f"{workspace_dir}/mutable_grad_input_dir" <- If[$input.requires_grad])
     <- ($prompt <- ($grad_input_prompt | default_prompt_for_grad_input)
+        <- $task_prompt
         <- $workspace_dir
         <- f"{workspace_dir}/const_grad_output_view"
         <- f"{workspace_dir}/const_input_view"
@@ -212,6 +224,7 @@ symbolic_transform_backward_grad_experience :=
     <- NestedList[select_experience_query_indexes list[torch.Tensor[int]]]
     <- $grad_exp_key_prompt BackwardPromptCallable # default None
     <- $grad_exp_value_prompt BackwardPromptCallable # default None
+    <- $task_prompt str # default ""
     <- $topk int # default 16
     <- $llm_method ("coding_agent" | "raw_llm_api") # default raw_llm_api
     # inline
@@ -282,6 +295,7 @@ symbolic_transform_backward_grad_experience :=
     # dump mutable views (LLM writes gradients here)
     <- (void <- $dump_view <- $grad_experience_sliced_value <- f"{workspace_dir}/mutable_grad_experience_dir")
     <- ($prompt <- $prompt_fn
+        <- $task_prompt
         <- $workspace_dir
         <- f"{workspace_dir}/const_grad_output_view"
         <- f"{workspace_dir}/const_input_view"

@@ -42,6 +42,7 @@ def fork_tensor_forward(
 
 
 def default_prompt_for_fork_grad_input(
+    task_prompt: str,
     workspace_dir: str,
     const_grad_outputs_view: str,
     const_input_view: str,
@@ -51,6 +52,7 @@ def default_prompt_for_fork_grad_input(
     """Default prompt for fork_tensor backward pass (merging gradients)."""
     return (
         "You are a symbolic gradient collector for backward pass.\n\n"
+        f"{task_prompt}\n\n"
         "During forward pass, the input was replicated to multi identical outputs.\n"
         "Now given the output gradients (how output should change), merge gradient for\n"
         "input.\n\n"
@@ -71,6 +73,7 @@ def fork_tensor_backward(
     input: torch.Tensor,
     outputs: List[torch.Tensor],
     grad_input_prompt: Optional[Callable[..., str]] = None,
+    task_prompt: str = "",
     llm_method: str = "raw_llm_api",
 ) -> Union[torch.Tensor, None]:
     """Backward pass of fork_tensor: merge multiple grad_outputs into one grad_input.
@@ -132,7 +135,7 @@ def fork_tensor_backward(
         grad_input_dir = os.path.join(workspace_dir, "mutable_grad_input_dir")
 
         prompt = (grad_input_prompt or default_prompt_for_fork_grad_input)(
-            workspace_dir, grad_outputs_dir, input_view_dir,
+            task_prompt, workspace_dir, grad_outputs_dir, input_view_dir,
             outputs_view_dir, grad_input_dir,
         )
 
@@ -165,6 +168,7 @@ class ForkTensor(torch.autograd.Function):
         input: torch.Tensor,
         num_outputs: int = 2,
         grad_input_prompt: Optional[Callable[..., str]] = None,
+        task_prompt: str = "",
         llm_method: str = "raw_llm_api",
     ) -> Tuple[torch.Tensor, ...]:
         outputs = fork_tensor_forward(input, num_outputs)
@@ -187,6 +191,7 @@ class ForkTensor(torch.autograd.Function):
         # Save non-tensor state
         ctx.num_outputs = num_outputs
         ctx.grad_input_prompt = grad_input_prompt
+        ctx.task_prompt = task_prompt
         ctx.llm_method = llm_method
 
         return tuple(outputs)
@@ -223,6 +228,7 @@ class ForkTensor(torch.autograd.Function):
             input,
             outputs,
             grad_input_prompt=ctx.grad_input_prompt,
+            task_prompt=ctx.task_prompt,
             llm_method=ctx.llm_method,
         )
 
@@ -230,8 +236,8 @@ class ForkTensor(torch.autograd.Function):
         if grad_input is not None:
             symbolic_grad_registry.register(input.st_tensor_uid, grad_input)
 
-        # Return grads for (input, num_outputs, grad_input_prompt, llm_method)
-        return grad_input, None, None, None
+        # Return grads for (input, num_outputs, grad_input_prompt, task_prompt, llm_method)
+        return grad_input, None, None, None, None
 
 
 fork_tensor = ForkTensor.apply

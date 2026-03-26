@@ -24,6 +24,7 @@ class NaiveModel(nn.Module):
         grad_input_prompt: Callable that builds the grad_input prompt. None uses default.
         grad_exp_key_prompt: Callable that builds the experience key gradient prompt. None uses default.
         grad_exp_value_prompt: Callable that builds the experience value gradient prompt. None uses default.
+        task_prompt: High-level task description (e.g. "Translate Python To Viba").
         topk: Number of experience entries to select.
     """
 
@@ -33,6 +34,7 @@ class NaiveModel(nn.Module):
         grad_input_prompt: Optional[Callable[..., str]] = None,
         grad_exp_key_prompt: Optional[Callable[..., str]] = None,
         grad_exp_value_prompt: Optional[Callable[..., str]] = None,
+        task_prompt: str = "",
         topk: int = 16,
     ):
         super().__init__()
@@ -42,6 +44,7 @@ class NaiveModel(nn.Module):
             grad_input_prompt=grad_input_prompt,
             grad_exp_key_prompt=grad_exp_key_prompt,
             grad_exp_value_prompt=grad_exp_value_prompt,
+            task_prompt=task_prompt,
             topk=topk,
         )
 

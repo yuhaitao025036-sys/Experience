@@ -92,6 +92,7 @@ def _copy_back_to_storage_view(mutable_dir: str, view_tensor: torch.Tensor) -> N
 
 
 def default_prompt_for_output(
+    task_prompt: str,
     workspace_dir: str,
     const_experience_view: str,
     const_input_view: str,
@@ -100,6 +101,7 @@ def default_prompt_for_output(
     """Default prompt for the forward pass (semantic translation).
 
     Args:
+        task_prompt: High-level task description (e.g. "Translate Python To Viba").
         workspace_dir: Root workspace directory.
         const_experience_view: Path to read-only experience QKV view.
         const_input_view: Path to read-only input view.
@@ -110,6 +112,7 @@ def default_prompt_for_output(
     """
     return (
         "You are a semantic translator.\n\n"
+        f"{task_prompt}\n\n"
         "Experience mappings are defined as:\n"
         "  1) file \"<root_dir>/<experience_coordinate>.../0/data.xxx\" means query file of <experience_coordinate>...\n"
         "  2) file \"<root_dir>/<experience_coordinate>.../1/data.xxx\" means key file of <experience_coordinate>...\n"
@@ -129,6 +132,7 @@ def symbolic_transform_forward(
     input: torch.Tensor,
     experience: torch.Tensor,
     output_prompt: Optional[Callable[..., str]] = None,
+    task_prompt: str = "",
     topk: int = 16,
     llm_method: str = "raw_llm_api",
 ) -> Tuple[torch.Tensor, Any]:
@@ -215,7 +219,7 @@ def symbolic_transform_forward(
         dump_view(scalar_output_value, output_dir, "txt")
 
         prompt = (output_prompt or default_prompt_for_output)(
-            workspace_dir, exp_view_dir, input_view_dir, output_dir,
+            task_prompt, workspace_dir, exp_view_dir, input_view_dir, output_dir,
         )
 
         flat_tasks.append(AgentTask(workspace_dir=workspace_dir, output_relative_dir="mutable_output_dir", prompt=prompt))
