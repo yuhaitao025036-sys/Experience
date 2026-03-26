@@ -2,10 +2,18 @@ import os
 import subprocess
 import tempfile
 import torch
-from typing import Any, Tuple
+from typing import Any, Callable, Optional, Tuple
 
-from experience.symbolic_tensor.function.symbolic_transform_forward import symbolic_transform_forward
-from experience.symbolic_tensor.function.symbolic_transform_backward import symbolic_transform_backward
+from experience.symbolic_tensor.function.symbolic_transform_forward import (
+    symbolic_transform_forward,
+    default_prompt_for_output,
+)
+from experience.symbolic_tensor.function.symbolic_transform_backward import (
+    symbolic_transform_backward,
+    default_prompt_for_grad_input,
+    default_prompt_for_grad_exp_key,
+    default_prompt_for_grad_exp_value,
+)
 from experience.symbolic_tensor.tensor_util.todo_tensor_like import todo_tensor_like
 from experience.symbolic_tensor.function import symbolic_grad_registry
 
@@ -16,12 +24,15 @@ class SymbolicTransform(torch.autograd.Function):
         ctx,
         input: torch.Tensor,
         experience: torch.Tensor,
-        forward_prompt: str = "",
+        output_prompt: Optional[Callable[..., str]] = None,
+        grad_input_prompt: Optional[Callable[..., str]] = None,
+        grad_exp_key_prompt: Optional[Callable[..., str]] = None,
+        grad_exp_value_prompt: Optional[Callable[..., str]] = None,
         topk: int = 16,
         llm_method: str = "raw_llm_api",
     ) -> Tuple[torch.Tensor, Any]:
         output, selected_experience_qkv_indexes_list = symbolic_transform_forward(
-            input, experience, forward_prompt, topk, llm_method=llm_method
+            input, experience, output_prompt, topk, llm_method=llm_method
         )
 
         # Save tensors for backward
@@ -36,7 +47,9 @@ class SymbolicTransform(torch.autograd.Function):
             ctx.st_attrs[name] = attrs
         # Save non-tensor state
         ctx.selected_experience_qkv_indexes_list = selected_experience_qkv_indexes_list
-        ctx.forward_prompt = forward_prompt
+        ctx.grad_input_prompt = grad_input_prompt
+        ctx.grad_exp_key_prompt = grad_exp_key_prompt
+        ctx.grad_exp_value_prompt = grad_exp_value_prompt
         ctx.topk = topk
         ctx.llm_method = llm_method
 
@@ -69,7 +82,9 @@ class SymbolicTransform(torch.autograd.Function):
             output,
             experience,
             ctx.selected_experience_qkv_indexes_list,
-            ctx.forward_prompt,
+            ctx.grad_input_prompt,
+            ctx.grad_exp_key_prompt,
+            ctx.grad_exp_value_prompt,
             ctx.topk,
             llm_method=ctx.llm_method,
         )
@@ -80,8 +95,9 @@ class SymbolicTransform(torch.autograd.Function):
             symbolic_grad_registry.register(input.st_tensor_uid, grad_input)
         symbolic_grad_registry.register(experience.st_tensor_uid, grad_experience)
 
-        # Return grads for (input, experience, forward_prompt, topk, llm_method)
-        return grad_input, grad_experience, None, None, None
+        # Return grads for (input, experience, output_prompt, grad_input_prompt,
+        #                    grad_exp_key_prompt, grad_exp_value_prompt, topk, llm_method)
+        return grad_input, grad_experience, None, None, None, None, None, None
 
 
 symbolic_transform = SymbolicTransform.apply
@@ -128,8 +144,11 @@ if __name__ == "__main__":
 
         output, selected_indexes = SymbolicTransform.apply(
             input_tensor, experience_tensor,
-            "Translate the English text to French.",
-            2,
+            None,  # output_prompt
+            None,  # grad_input_prompt
+            None,  # grad_exp_key_prompt
+            None,  # grad_exp_value_prompt
+            2,     # topk
             "raw_llm_api",
         )
 
@@ -159,7 +178,7 @@ if __name__ == "__main__":
 
         output, selected_indexes = symbolic_transform_forward(
             input_tensor, experience_tensor,
-            forward_prompt="Translate the English text to French.",
+            output_prompt=None,
             topk=2,
             llm_method="raw_llm_api",
         )
@@ -176,7 +195,6 @@ if __name__ == "__main__":
         grad_input, grad_experience = symbolic_transform_backward(
             grad_output, input_tensor, output, experience_tensor,
             selected_experience_qkv_indexes_list=selected_indexes,
-            forward_prompt="Translate the English text to French.",
             topk=2,
             llm_method="raw_llm_api",
         )

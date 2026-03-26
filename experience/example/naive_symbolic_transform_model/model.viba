@@ -1,9 +1,16 @@
+OutputPromptCallable := Import[experience/symbolic_tensor/function/symbolic_transform.viba].OutputPromptCallable
+BackwardPromptCallable := Import[experience/symbolic_tensor/function/symbolic_transform.viba].BackwardPromptCallable
+
 NaiveModel := torch.nn.Module
 
 __init__ :=
     void
     <- $self NaiveModel
-    <- ...
+    <- $output_prompt OutputPromptCallable # default None
+    <- $grad_input_prompt BackwardPromptCallable # default None
+    <- $grad_exp_key_prompt BackwardPromptCallable # default None
+    <- $grad_exp_value_prompt BackwardPromptCallable # default None
+    <- $topk int # default 16
     # inline
     <- Import[experience/symbolic_tensor/module/symbolic_transform.py]
 

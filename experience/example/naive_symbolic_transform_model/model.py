@@ -2,7 +2,7 @@ import os
 import torch
 import torch.nn as nn
 from pathlib import Path
-from typing import Tuple, Any
+from typing import Any, Callable, Optional, Tuple
 
 from experience.symbolic_tensor.module.symbolic_transform import SymbolicTransformModule
 from experience.symbolic_tensor.tensor_util.make_tensor import make_tensor
@@ -20,15 +20,28 @@ class NaiveModel(nn.Module):
     otherwise initialized with seed examples.
 
     Args:
-        forward_prompt: The task prompt for the symbolic transform.
+        output_prompt: Callable that builds the forward prompt. None uses default.
+        grad_input_prompt: Callable that builds the grad_input prompt. None uses default.
+        grad_exp_key_prompt: Callable that builds the experience key gradient prompt. None uses default.
+        grad_exp_value_prompt: Callable that builds the experience value gradient prompt. None uses default.
         topk: Number of experience entries to select.
     """
 
-    def __init__(self, forward_prompt: str = "", topk: int = 16):
+    def __init__(
+        self,
+        output_prompt: Optional[Callable[..., str]] = None,
+        grad_input_prompt: Optional[Callable[..., str]] = None,
+        grad_exp_key_prompt: Optional[Callable[..., str]] = None,
+        grad_exp_value_prompt: Optional[Callable[..., str]] = None,
+        topk: int = 16,
+    ):
         super().__init__()
         self.transform = SymbolicTransformModule(
             experience_shape=[1, 3],
-            forward_prompt=forward_prompt,
+            output_prompt=output_prompt,
+            grad_input_prompt=grad_input_prompt,
+            grad_exp_key_prompt=grad_exp_key_prompt,
+            grad_exp_value_prompt=grad_exp_value_prompt,
             topk=topk,
         )
 

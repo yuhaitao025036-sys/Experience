@@ -3,7 +3,7 @@ import subprocess
 import tempfile
 import torch
 import torch.nn as nn
-from typing import List, Tuple, Any
+from typing import Any, Callable, List, Optional, Tuple
 
 from experience.symbolic_tensor.function.symbolic_transform import symbolic_transform
 from experience.symbolic_tensor.tensor_util.make_none_tensor import make_none_tensor
@@ -19,7 +19,10 @@ class SymbolicTransformModule(nn.Module):
 
     Args:
         experience_shape: Shape of the experience tensor, e.g. [num_entries, 3].
-        forward_prompt: Prompt describing the transformation task.
+        output_prompt: Callable that builds the forward prompt. None uses default.
+        grad_input_prompt: Callable that builds the grad_input prompt. None uses default.
+        grad_exp_key_prompt: Callable that builds the experience key gradient prompt. None uses default.
+        grad_exp_value_prompt: Callable that builds the experience value gradient prompt. None uses default.
         topk: Number of experience entries to select per input element.
     """
 
@@ -28,11 +31,17 @@ class SymbolicTransformModule(nn.Module):
     def __init__(
         self,
         experience_shape: List[int],
-        forward_prompt: str = "",
+        output_prompt: Optional[Callable[..., str]] = None,
+        grad_input_prompt: Optional[Callable[..., str]] = None,
+        grad_exp_key_prompt: Optional[Callable[..., str]] = None,
+        grad_exp_value_prompt: Optional[Callable[..., str]] = None,
         topk: int = 16,
     ):
         super().__init__()
-        self.forward_prompt = forward_prompt
+        self.output_prompt = output_prompt
+        self.grad_input_prompt = grad_input_prompt
+        self.grad_exp_key_prompt = grad_exp_key_prompt
+        self.grad_exp_value_prompt = grad_exp_value_prompt
         self.topk = topk
         self._experience_dir = tempfile.mkdtemp()
         self.experience = make_none_tensor(experience_shape, self._experience_dir)
@@ -42,7 +51,12 @@ class SymbolicTransformModule(nn.Module):
         yield self.experience
 
     def forward(self, input: torch.Tensor) -> Tuple[torch.Tensor, Any]:
-        return symbolic_transform(input, self.experience, self.forward_prompt, self.topk)
+        return symbolic_transform(
+            input, self.experience,
+            self.output_prompt, self.grad_input_prompt,
+            self.grad_exp_key_prompt, self.grad_exp_value_prompt,
+            self.topk,
+        )
 
 
 if __name__ == "__main__":
@@ -87,14 +101,13 @@ if __name__ == "__main__":
     print("Test 1: Construction")
     model = SymbolicTransformModule(
         experience_shape=[2, 3],
-        forward_prompt="Translate to French.",
         topk=2,
     )
     run_test("experience shape", list(model.experience.shape) == [2, 3])
     run_test("experience has st_relative_to", hasattr(model.experience, "st_relative_to"))
     run_test("experience has st_tensor_uid", hasattr(model.experience, "st_tensor_uid"))
     run_test("experience requires_grad", model.experience.requires_grad)
-    run_test("forward_prompt stored", model.forward_prompt == "Translate to French.")
+    run_test("output_prompt default None", model.output_prompt is None)
     run_test("topk stored", model.topk == 2)
     params = list(model.parameters())
     run_test("1 parameter", len(params) == 1)
@@ -111,7 +124,6 @@ if __name__ == "__main__":
 
         model = SymbolicTransformModule(
             experience_shape=[2, 3],
-            forward_prompt="Translate to French.",
             topk=2,
         )
         # Load content: copy src storage into model's experience
@@ -133,7 +145,6 @@ if __name__ == "__main__":
 
         model = SymbolicTransformModule(
             experience_shape=[2, 3],
-            forward_prompt="Translate to French.",
             topk=2,
         )
         loaded = copy_impl(src, model._experience_dir)
@@ -157,10 +168,9 @@ if __name__ == "__main__":
 
     model = SymbolicTransformModule(
         experience_shape=[2, 3],
-        forward_prompt="Translate.",
         topk=1,
     )
-    optimizer = SymbolicSGD(model.parameters(), lr=1.0, step_prompt="Update translations.")
+    optimizer = SymbolicSGD(model.parameters(), lr=1.0)
     run_test("Optimizer accepts model.parameters()", len(optimizer.param_groups) == 1)
     run_test("Optimizer has 1 param", len(optimizer.param_groups[0]["params"]) == 1)
 

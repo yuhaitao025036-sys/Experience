@@ -3,7 +3,7 @@ import shutil
 import tempfile
 import itertools
 import torch
-from typing import Any, List, Tuple, Union
+from typing import Any, Callable, List, Optional, Tuple, Union
 
 from experience.symbolic_tensor.tensor_util.todo_tensor_like import todo_tensor_like
 from experience.symbolic_tensor.tensor_util.empty_tensor_like import empty_tensor_like
@@ -167,13 +167,119 @@ def _build_nested_result(flat_results: List[Any], shape: List[int]) -> Any:
     ]
 
 
+def default_prompt_for_grad_input(
+    workspace_dir: str,
+    const_grad_output_view: str,
+    const_input_view: str,
+    const_output_view: str,
+    const_experience_view: str,
+    mutable_grad_input_dir: str,
+) -> str:
+    """Default prompt for computing input gradient in backward pass."""
+    return (
+        "You are a symbolic gradient calculator for backward pass.\n\n"
+        "During forward pass, the input was translated to output using experience entries.\n"
+        "Now given the output gradient (how output should change), compute gradients for\n"
+        "input and experience.\n\n"
+        "Context (read-only):\n"
+        f"- Output gradient (text diff): \"{const_grad_output_view}\"\n"
+        f"- Original input: \"{const_input_view}\"\n"
+        f"- Original output: \"{const_output_view}\"\n"
+        f"- Experience entries used during forward: \"{const_experience_view}\"\n"
+        "  where .../0/data.xxx = query, .../1/data.xxx = key, .../2/data.xxx = value\n"
+        "- Each line in query files only contains one summary key word for current experience.\n"
+        "  which used for calculate similarity between inputs and experience.\n"
+        "- Key files contain source domain semantics.\n"
+        "- Value files contain target domain semantics.\n\n"
+        "Compute and write:\n"
+        f"1. Input gradient in \"{mutable_grad_input_dir}\":\n"
+        "   How should the input text change to improve the output?\n"
+        f"2. File \"{mutable_grad_input_dir}/<xxx>/data\" must be a better version of \"{const_input_view}/<xxx>/data\"\n\n"
+        "Replace all TODO with source semantic files.\n"
+    )
+
+
+def default_prompt_for_grad_exp_key(
+    workspace_dir: str,
+    const_grad_output_view: str,
+    const_input_view: str,
+    const_output_view: str,
+    const_experience_view: str,
+    mutable_grad_experience_dir: str,
+) -> str:
+    """Default prompt for computing experience key gradient in backward pass."""
+    return (
+        "You are a symbolic gradient calculator for backward pass.\n\n"
+        "During forward pass, the input was translated to output using experience entries.\n"
+        "Now compute better experience entries to improve future translations.\n\n"
+        "Context (read-only):\n"
+        f"- Original input: \"{const_input_view}\"\n"
+        f"- Original output: \"{const_output_view}\"\n"
+        f"- Output gradient (how output should change, in unified diff format — DO NOT copy this diff text): \"{const_grad_output_view}\"\n"
+        f"- Experience entries used during forward: \"{const_experience_view}\"\n"
+        "  where .../0/data.xxx = query, .../1/data.xxx = key, .../2/data.xxx = value\n"
+        "- Key files contain source domain content (same domain as input).\n"
+        "- Value files contain target domain content (same domain as output).\n\n"
+        "IMPORTANT: You must write actual content, NOT diff/patch text.\n"
+        "- Key content should be in the SAME language/format as the input files.\n"
+        "- Value content should be in the SAME language/format as the output files.\n"
+        "- NEVER write diff headers (--- +++ @@) as content.\n\n"
+        "Compute and write:\n"
+        f"1. Experience key in \"{mutable_grad_experience_dir}\":\n"
+        "   Write improved experience entries that would help produce better translations.\n"
+        f"2. File \"{mutable_grad_experience_dir}/<xxx>/data\" must be a better version of \"{const_experience_view}/<xxx>/data\"\n\n"
+        "Replace all TODO with experience key semantic files.\n\n"
+        "You are writing KEY files. "
+        "Key content must be in the SAME language/format as the INPUT files (source domain). "
+        "Copy or adapt content from the input files. "
+        "Do NOT use the output/target format for key files.\n"
+    )
+
+
+def default_prompt_for_grad_exp_value(
+    workspace_dir: str,
+    const_grad_output_view: str,
+    const_input_view: str,
+    const_output_view: str,
+    const_experience_view: str,
+    mutable_grad_experience_dir: str,
+) -> str:
+    """Default prompt for computing experience value gradient in backward pass."""
+    return (
+        "You are a symbolic gradient calculator for backward pass.\n\n"
+        "During forward pass, the input was translated to output using experience entries.\n"
+        "Now compute better experience entries to improve future translations.\n\n"
+        "Context (read-only):\n"
+        f"- Original input: \"{const_input_view}\"\n"
+        f"- Original output: \"{const_output_view}\"\n"
+        f"- Output gradient (how output should change, in unified diff format — DO NOT copy this diff text): \"{const_grad_output_view}\"\n"
+        f"- Experience entries used during forward: \"{const_experience_view}\"\n"
+        "  where .../0/data.xxx = query, .../1/data.xxx = key, .../2/data.xxx = value\n"
+        "- Key files contain source domain content (same domain as input).\n"
+        "- Value files contain target domain content (same domain as output).\n\n"
+        "IMPORTANT: You must write actual content, NOT diff/patch text.\n"
+        "- Key content should be in the SAME language/format as the input files.\n"
+        "- Value content should be in the SAME language/format as the output files.\n"
+        "- NEVER write diff headers (--- +++ @@) as content.\n\n"
+        "Compute and write:\n"
+        f"1. Experience value in \"{mutable_grad_experience_dir}\":\n"
+        "   Write improved experience entries that would help produce better translations.\n"
+        f"2. File \"{mutable_grad_experience_dir}/<xxx>/data\" must be a better version of \"{const_experience_view}/<xxx>/data\"\n\n"
+        "Replace all TODO with experience value semantic files.\n\n"
+        "You are writing VALUE files. "
+        "Value content must be in the SAME language/format as the OUTPUT files (target domain). "
+        "Copy or adapt content from the output files. "
+        "Do NOT use the input/source format for value files.\n"
+    )
+
+
 def symbolic_transform_backward_grad_input(
     grad_output: torch.Tensor,
     input: torch.Tensor,
     output: torch.Tensor,
     experience: torch.Tensor,
     selected_experience_qkv_indexes_list: Any,
-    forward_prompt: str = "",
+    grad_input_prompt: Optional[Callable[..., str]] = None,
     topk: int = 16,
     llm_method: str = "raw_llm_api",
 ) -> Union[torch.Tensor, None]:
@@ -230,27 +336,9 @@ def symbolic_transform_backward_grad_input(
         dump_view(experience_sliced_view, experience_view_dir, "txt")
         dump_view(scalar_grad_input_value, grad_input_dir, "txt")
 
-        prompt = (
-            "You are a symbolic gradient calculator for backward pass.\n\n"
-            f"{forward_prompt}\n\n"
-            "During forward pass, the input was translated to output using experience entries.\n"
-            "Now given the output gradient (how output should change), compute gradients for\n"
-            "input and experience.\n\n"
-            "Context (read-only):\n"
-            f"- Output gradient (text diff): \"{grad_output_view_dir}\"\n"
-            f"- Original input: \"{input_view_dir}\"\n"
-            f"- Original output: \"{output_view_dir}\"\n"
-            f"- Experience entries used during forward: \"{experience_view_dir}\"\n"
-            "  where .../0/data.xxx = query, .../1/data.xxx = key, .../2/data.xxx = value\n"
-            "- Each line in query files only contains one summary key word for current experience.\n"
-            "  which used for calculate similarity between inputs and experience.\n"
-            "- Key files contain source domain semantics.\n"
-            "- Value files contain target domain semantics.\n\n"
-            "Compute and write:\n"
-            f"1. Input gradient in \"{grad_input_dir}\":\n"
-            "   How should the input text change to improve the output?\n"
-            f"2. File \"{grad_input_dir}/<xxx>/data\" must be a better version of \"{input_view_dir}/<xxx>/data\"\n\n"
-            "Replace all TODO with source semantic files.\n"
+        prompt = (grad_input_prompt or default_prompt_for_grad_input)(
+            workspace_dir, grad_output_view_dir, input_view_dir,
+            output_view_dir, experience_view_dir, grad_input_dir,
         )
 
         agent_task = AgentTask(
@@ -281,14 +369,15 @@ def symbolic_transform_backward_grad_experience(
     output: torch.Tensor,
     experience: torch.Tensor,
     selected_experience_qkv_indexes_list: Any,
-    forward_prompt: str = "",
+    grad_exp_key_prompt: Optional[Callable[..., str]] = None,
+    grad_exp_value_prompt: Optional[Callable[..., str]] = None,
     topk: int = 16,
     llm_method: str = "raw_llm_api",
 ) -> torch.Tensor:
     """Compute grad_experience by iterating per experience entry via transposed sparse coordinates.
 
-    Runs TWO passes per experience entry — one for query gradient (slice(1,2)) and one for
-    value gradient (slice(2,3)) — with different prompt suffixes. This ensures query gradients
+    Runs TWO passes per experience entry — one for key gradient (slice(1,2)) and one for
+    value gradient (slice(2,3)) — with different prompt callables. This ensures key gradients
     use input-domain semantics and value gradients use output-domain semantics.
     """
     # Two-step padding: generate random none-experience indexes, merge with selected, shuffle, take topk
@@ -313,28 +402,10 @@ def symbolic_transform_backward_grad_experience(
     # ── Numeric channel ──
     grad_experience.data.zero_()
 
-    # GradExprTypeList: two gradient types with different slices and prompt suffixes
-    GRAD_EXP_TYPES = [
-        {
-            "name": "key",
-            "last_dim_slice": slice(1, 2, None),
-            "prompt_suffix": (
-                "You are writing KEY files. "
-                "Key content must be in the SAME language/format as the INPUT files (source domain). "
-                "Copy or adapt content from the input files. "
-                "Do NOT use the output/target format for key files.\n"
-            ),
-        },
-        {
-            "name": "value",
-            "last_dim_slice": slice(2, 3, None),
-            "prompt_suffix": (
-                "You are writing VALUE files. "
-                "Value content must be in the SAME language/format as the OUTPUT files (target domain). "
-                "Copy or adapt content from the output files. "
-                "Do NOT use the input/source format for value files.\n"
-            ),
-        },
+    # Two gradient types: key (slice 1:2) and value (slice 2:3) with different prompt callables
+    grad_exp_types = [
+        (slice(1, 2, None), grad_exp_key_prompt or default_prompt_for_grad_exp_key),
+        (slice(2, 3, None), grad_exp_value_prompt or default_prompt_for_grad_exp_value),
     ]
 
     # Collect all tasks across both grad types, then batch-call TaskHandler
@@ -344,9 +415,7 @@ def symbolic_transform_backward_grad_experience(
     for sole_exp_point, multi_output_points in transposed:
         int_exp_point = [t.item() for t in sole_exp_point]
 
-        for grad_exp_type in GRAD_EXP_TYPES:
-            last_dim_slice = grad_exp_type["last_dim_slice"]
-            prompt_suffix = grad_exp_type["prompt_suffix"]
+        for last_dim_slice, prompt_fn in grad_exp_types:
 
             # Replace last dim with the type-specific slice
             select_experience_indexes = _replace_last_tensor_with_slice(
@@ -379,29 +448,9 @@ def symbolic_transform_backward_grad_experience(
             dump_view(experience_sliced_view, experience_view_dir, "txt")
             dump_view(grad_experience_sliced_value, grad_experience_dir, "txt")
 
-            prompt = (
-                "You are a symbolic gradient calculator for backward pass.\n\n"
-                f"{forward_prompt}\n\n"
-                "During forward pass, the input was translated to output using experience entries.\n"
-                "Now compute better experience entries to improve future translations.\n\n"
-                "Context (read-only):\n"
-                f"- Original input: \"{input_view_dir}\"\n"
-                f"- Original output: \"{output_view_dir}\"\n"
-                f"- Output gradient (how output should change, in unified diff format — DO NOT copy this diff text): \"{grad_output_view_dir}\"\n"
-                f"- Experience entries used during forward: \"{experience_view_dir}\"\n"
-                "  where .../0/data.xxx = query, .../1/data.xxx = key, .../2/data.xxx = value\n"
-                "- Key files contain source domain content (same domain as input).\n"
-                "- Value files contain target domain content (same domain as output).\n\n"
-                "IMPORTANT: You must write actual content, NOT diff/patch text.\n"
-                "- Key content should be in the SAME language/format as the input files.\n"
-                "- Value content should be in the SAME language/format as the output files.\n"
-                "- NEVER write diff headers (--- +++ @@) as content.\n\n"
-                "Compute and write:\n"
-                f"1. Experience {grad_exp_type['name']} in \"{grad_experience_dir}\":\n"
-                "   Write improved experience entries that would help produce better translations.\n"
-                f"2. File \"{grad_experience_dir}/<xxx>/data\" must be a better version of \"{experience_view_dir}/<xxx>/data\"\n\n"
-                f"Replace all TODO with experience {grad_exp_type['name']} semantic files.\n\n"
-                f"{prompt_suffix}"
+            prompt = prompt_fn(
+                workspace_dir, grad_output_view_dir, input_view_dir,
+                output_view_dir, experience_view_dir, grad_experience_dir,
             )
 
             agent_task = AgentTask(
@@ -432,7 +481,9 @@ def symbolic_transform_backward(
     output: torch.Tensor,
     experience: torch.Tensor,
     selected_experience_qkv_indexes_list: Any,
-    forward_prompt: str = "",
+    grad_input_prompt: Optional[Callable[..., str]] = None,
+    grad_exp_key_prompt: Optional[Callable[..., str]] = None,
+    grad_exp_value_prompt: Optional[Callable[..., str]] = None,
     topk: int = 16,
     llm_method: str = "raw_llm_api",
 ) -> Tuple[Union[torch.Tensor, None], torch.Tensor]:
@@ -449,7 +500,9 @@ def symbolic_transform_backward(
         output: Original output tensor (saved from forward ctx).
         experience: Experience tensor (saved from forward ctx, last dim=3: q/k/v).
         selected_experience_qkv_indexes_list: Nested list of index tensors from forward.
-        forward_prompt: The prompt used during forward pass.
+        grad_input_prompt: Callable that builds the grad_input prompt. None uses default.
+        grad_exp_key_prompt: Callable that builds the experience key gradient prompt. None uses default.
+        grad_exp_value_prompt: Callable that builds the experience value gradient prompt. None uses default.
         topk: Number of top experience entries used per element.
         llm_method: LLM backend to use.
 
@@ -459,13 +512,13 @@ def symbolic_transform_backward(
     grad_input = symbolic_transform_backward_grad_input(
         grad_output, input, output, experience,
         selected_experience_qkv_indexes_list,
-        forward_prompt, topk, llm_method,
+        grad_input_prompt, topk, llm_method,
     )
 
     grad_experience = symbolic_transform_backward_grad_experience(
         grad_output, input, output, experience,
         selected_experience_qkv_indexes_list,
-        forward_prompt, topk, llm_method,
+        grad_exp_key_prompt, grad_exp_value_prompt, topk, llm_method,
     )
 
     return grad_input, grad_experience
@@ -624,7 +677,6 @@ if __name__ == "__main__":
         grad_input, grad_experience = symbolic_transform_backward(
             grad_output_tensor, input_tensor, output_tensor, exp_tensor,
             selected_experience_qkv_indexes_list=sel_indexes,
-            forward_prompt="Translate the English text to French.",
             topk=2,
             llm_method="raw_llm_api",
         )
@@ -676,7 +728,6 @@ if __name__ == "__main__":
         grad_input, grad_experience = symbolic_transform_backward(
             grad_output_tensor, input_tensor, output_tensor, exp_tensor,
             selected_experience_qkv_indexes_list=sel_indexes,
-            forward_prompt="Translate English to French.",
             topk=2,
             llm_method="raw_llm_api",
         )

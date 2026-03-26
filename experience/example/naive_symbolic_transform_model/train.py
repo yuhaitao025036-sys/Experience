@@ -33,7 +33,6 @@ EXAMPLE_DIR = os.path.dirname(__file__)
 DATASET_DIR = os.path.join(EXAMPLE_DIR, "dataset")
 LOSS_LOG = "/tmp/loss.log"
 NUM_ITERATIONS = 5
-FORWARD_PROMPT = "Translate Python To Viba"
 
 DATASET_PAIRS = [
     "seq", "branch", "loop",
@@ -107,7 +106,7 @@ def main():
         experience_tensor = make_tensor([[""] * 3 for _ in range(2 * n)], tmpdir)
 
         # ── Model & optimizer ──
-        model = NaiveModel(forward_prompt=FORWARD_PROMPT, topk=1)
+        model = NaiveModel(topk=1)
         model.load_experience(experience_tensor)
         optimizer = SymbolicSGD(model.parameters(), lr=1.0)
 

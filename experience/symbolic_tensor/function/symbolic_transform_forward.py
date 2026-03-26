@@ -3,7 +3,7 @@ import tempfile
 import itertools
 import shutil
 import torch
-from typing import Any, List, Tuple, Union
+from typing import Any, Callable, List, Optional, Tuple, Union
 
 from experience.symbolic_tensor.tensor_util.todo_tensor_like import todo_tensor_like
 from experience.symbolic_tensor.tensor_util.slice_view import slice_view
@@ -91,10 +91,44 @@ def _copy_back_to_storage_view(mutable_dir: str, view_tensor: torch.Tensor) -> N
                 f.write(content)
 
 
+def default_prompt_for_output(
+    workspace_dir: str,
+    const_experience_view: str,
+    const_input_view: str,
+    mutable_output_dir: str,
+) -> str:
+    """Default prompt for the forward pass (semantic translation).
+
+    Args:
+        workspace_dir: Root workspace directory.
+        const_experience_view: Path to read-only experience QKV view.
+        const_input_view: Path to read-only input view.
+        mutable_output_dir: Path to mutable output directory (LLM writes here).
+
+    Returns:
+        The prompt string for the LLM agent.
+    """
+    return (
+        "You are a semantic translator.\n\n"
+        "Experience mappings are defined as:\n"
+        "  1) file \"<root_dir>/<experience_coordinate>.../0/data.xxx\" means query file of <experience_coordinate>...\n"
+        "  2) file \"<root_dir>/<experience_coordinate>.../1/data.xxx\" means key file of <experience_coordinate>...\n"
+        "  3) file \"<root_dir>/<experience_coordinate>.../2/data.xxx\" means value file of <experience_coordinate>...\n\n"
+        "You need read all the key => value pairs to get the experiences.\n"
+        "The value files show the EXACT target format and syntax.\n"
+        "You MUST faithfully follow the syntax patterns, structure, and style from the value files.\n"
+        "Do NOT invent your own syntax or formatting — copy the patterns from the experience values.\n\n"
+        f"Conducted by \"{const_experience_view}\",\n"
+        f"please translate source semantic text \"{const_input_view}\"\n"
+        f"to target semantic text \"{mutable_output_dir}\".\n\n"
+        f"Replace TODO in \"{mutable_output_dir}\" with target semantic text.\n"
+    )
+
+
 def symbolic_transform_forward(
     input: torch.Tensor,
     experience: torch.Tensor,
-    forward_prompt: str = "",
+    output_prompt: Optional[Callable[..., str]] = None,
     topk: int = 16,
     llm_method: str = "raw_llm_api",
 ) -> Tuple[torch.Tensor, Any]:
@@ -115,9 +149,11 @@ def symbolic_transform_forward(
     Args:
         input: A symbolic tensor to translate.
         experience: An Experience tensor (last dim=3: query, key, value).
-        forward_prompt: Optional additional prompt guidance for the LLM.
+        output_prompt: Callable that builds the forward prompt. Receives
+            (workspace_dir, const_experience_view, const_input_view, mutable_output_dir)
+            and returns a prompt string. None uses default_prompt_for_output.
         topk: Number of top experience entries to use per element.
-        method: Transform method to use (default "coding_agent").
+        llm_method: LLM backend to use (default "raw_llm_api").
 
     Returns:
         A tuple of:
@@ -178,21 +214,8 @@ def symbolic_transform_forward(
         # Dump the copy (not the view) — LLM writes here freely
         dump_view(scalar_output_value, output_dir, "txt")
 
-        prompt = (
-            "You are a semantic translator.\n\n"
-            f"{forward_prompt}\n\n"
-            "Experience mappings are defined as:\n"
-            f"  1) file \"<root_dir>/<experience_coordinate>.../0/data.xxx\" means query file of <experience_coordinate>...\n"
-            f"  2) file \"<root_dir>/<experience_coordinate>.../1/data.xxx\" means key file of <experience_coordinate>...\n"
-            f"  3) file \"<root_dir>/<experience_coordinate>.../2/data.xxx\" means value file of <experience_coordinate>...\n\n"
-            "You need read all the key => value pairs to get the experiences.\n"
-            "The value files show the EXACT target format and syntax.\n"
-            "You MUST faithfully follow the syntax patterns, structure, and style from the value files.\n"
-            "Do NOT invent your own syntax or formatting — copy the patterns from the experience values.\n\n"
-            f"Conducted by \"{exp_view_dir}\",\n"
-            f"please translate source semantic text \"{input_view_dir}\"\n"
-            f"to target semantic text \"{output_dir}\".\n\n"
-            f"Replace TODO in \"{output_dir}\" with target semantic text.\n"
+        prompt = (output_prompt or default_prompt_for_output)(
+            workspace_dir, exp_view_dir, input_view_dir, output_dir,
         )
 
         flat_tasks.append(AgentTask(workspace_dir=workspace_dir, output_relative_dir="mutable_output_dir", prompt=prompt))
@@ -259,7 +282,7 @@ if __name__ == "__main__":
 
         output, selected_indexes = symbolic_transform_forward(
             input_tensor, experience_tensor,
-            forward_prompt="Translate the English text to French.",
+            output_prompt=None,
             topk=2,
             llm_method="coding_agent",
         )
@@ -294,7 +317,7 @@ if __name__ == "__main__":
 
         output, selected_indexes = symbolic_transform_forward(
             input_tensor, experience_tensor,
-            forward_prompt="Translate the English text to French.",
+            output_prompt=None,
             topk=2,
             llm_method="raw_llm_api",
         )

@@ -150,6 +150,39 @@ with tempfile.TemporaryDirectory() as tmpdir:
 python -m experience.example.naive_symbolic_transform_model.train
 ```
 
+### 6. Results (5 iterations, 12 pairs)
+
+Loss trajectory: `['0.6641', '0.5469', '0.4668', '0.4473', '0.4219']` — **converges** (36.5% reduction).
+
+```
+Dataset: 12 pairs
+Experience: [24, 3]   # 24 entries (2x dataset size for exploration headroom)
+
+Iteration 1/5  Mean loss: 0.6641
+  output[0]: 'fun greet(name: str) -> str:\n    let greeting = "Hello"...'        # random language
+  output[1]: 'func classify(x: int) -> str:\n    if x > 0:...'                  # Python-like
+  Patches: applied=18 rejected=0 fuzzed=0 skipped=0
+
+Iteration 3/5  Mean loss: 0.4668
+  output[0]: 'greet :=\n    $message str\n    <- $name str\n    ...'              # Viba syntax!
+  output[5]: 'make_pair :=\n    dict\n    <- $a str\n    <- $b str\n    ...'    # Viba syntax!
+  Patches: applied=6 rejected=0 fuzzed=0 skipped=0
+
+Iteration 5/5  Mean loss: 0.4219
+  output[1]: "classify :=\n    | 'positive'\n    | 'zero'\n    | 'negative'..."  # exact Viba
+  output[3]: 'factorial :=\n    <- $n int\n    # recursive\n    <- Match[...]'   # exact Viba
+  output[11]: 'make_adder :=\n    $adder (int <- int)\n    <- $x int\n    ...'    # exact Viba
+
+Patch stats (all 5 iterations): 34/34 applied, 0 rejected, 100% success rate.
+```
+
+Key observations:
+- The model **starts with no Viba knowledge** — iteration 1 outputs are in random languages (Go, Rust, TypeScript-like).
+- By iteration 3, the LLM begins using Viba syntax (`<-`, `$var`, `:=`) for some outputs.
+- By iteration 5, several outputs match expected Viba code exactly (loss < 0.01 for branch, closure, guard).
+- Experience entries accumulate correct Python→Viba mappings during training — e.g., entry `[22,23]` stores `classify(x) -> classify := | 'positive' | ...`.
+- All 34 patches applied cleanly with 0% rejection rate across 5 iterations.
+
 ## How It Works
 
 ### Storage Layout

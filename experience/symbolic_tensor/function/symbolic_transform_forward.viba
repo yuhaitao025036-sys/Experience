@@ -1,12 +1,38 @@
 
-# Prompt is only for comprehension. do not generate
-Prompt := str
+# Prompt callables: each is a function that receives workspace dirs and returns a prompt string.
+# When None, the default is used.
+
+default_prompt_for_output :=
+    $prompt str
+    <- $workspace_dir str
+    <- $const_experience_view str
+    <- $const_input_view str
+    <- $mutable_output_dir str
+    <- ($prompt <- '''
+        You are a semantic translator.
+
+        Experience mappings are defined as:
+            1) file "<root_dir>/<experience_coordinate>.../0/data.xxx" means query file of <experience_coordinate>...
+            2) file "<root_dir>/<experience_coordinate>.../1/data.xxx" means key file of <experience_coordinate>...
+            3) file "<root_dir>/<experience_coordinate>.../2/data.xxx" means value file of <experience_coordinate>...
+
+        You need read all the key => value pairs to get the experiences.
+        The value files show the EXACT target format and syntax.
+        You MUST faithfully follow the syntax patterns, structure, and style from the value files.
+        Do NOT invent your own syntax or formatting — copy the patterns from the experience values.
+
+        Conducted by f"{const_experience_view}",
+        please translate source semantic text f"{const_input_view}"
+        to target semantic text f"{mutable_output_dir}".
+
+        Replace TODO in f"{mutable_output_dir}" with target semantic text.
+    ''')
 
 symbolic_transform_forward :=
     ($output Symboilc[torch.Tensor], $selected_experience_qkv_indexes_list NestList[list[torch.Tensor[int]]])
     <- $input Symboilc[torch.Tensor]
     <- $experience ExperienceTensor[Symbolic[torch.Tensor]]
-    <- $forward_prompt Prompt # default ""
+    <- $output_prompt $func ($ret str <- $workspace_dir str <- $const_experience_view str <- $const_input_view str <- $mutable_output_dir str) # default None
     <- $topk int # default 16
     <- $llm_method ("coding_agent" | "raw_llm_api") # default raw_llm_api
     # inline
@@ -48,24 +74,11 @@ symbolic_transform_forward :=
         <- $dump_view
         <- $scalar_output_value
         <- f"{workspace_dir}/mutable_output_dir")
-    <- ($prompt <- '''
-        You are a semantic translator.
-
-        f"{forward_prompt}"
-
-        Experience mappings are defined as:
-            1) file "<root_dir>/<experience_coordinate>.../0/data.xxx" means query file of <experience_coordinate>...
-            2) file "<root_dir>/<experience_coordinate>.../1/data.xxx" means key file of <experience_coordinate>...
-            3) file "<root_dir>/<experience_coordinate>.../2/data.xxx" means value file of <experience_coordinate>...
-
-        You need read all the key => value pairs to get the experiences.
-
-        Conducted by f"{workspace_dir}/const_experiance_view",
-        please translate source semantic text f"{workspace_dir}/const_input_view"
-        to target semantic text f"{workspace_dir}/mutable_output_dir".
-
-        replace TODO in f"{workspace_dir}/mutable_output_dir" with target semantic text
-    ''')
+    <- ($prompt <- ($output_prompt | default_prompt_for_output)
+        <- $workspace_dir
+        <- f"{workspace_dir}/const_experiance_view"
+        <- f"{workspace_dir}/const_input_view"
+        <- f"{workspace_dir}/mutable_output_dir")
     <- ($agent_task AgentTask <- $workspace_dir <- "mutable_output_dir" <- $prompt)
     <- ($all_tasks <- NestList[$agent_task])
     <- (void <- Import[experience/llm_client/task_handler.viba] <- $all_tasks <- $llm_method)
