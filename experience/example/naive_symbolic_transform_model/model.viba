@@ -1,6 +1,7 @@
 OutputPromptCallable := Import[experience/symbolic_tensor/function/symbolic_transform.viba].OutputPromptCallable
 QueryPromptCallable := Import[experience/symbolic_tensor/function/symbolic_transform.viba].QueryPromptCallable
 BackwardPromptCallable := Import[experience/symbolic_tensor/function/symbolic_transform.viba].BackwardPromptCallable
+RetrievalMethodCallable := Import[experience/symbolic_tensor/function/symbolic_transform.viba].RetrievalMethodCallable
 
 NaiveModel := torch.nn.Module
 
@@ -14,6 +15,7 @@ __init__ :=
     <- $grad_exp_value_prompt BackwardPromptCallable # default None
     <- $task_prompt str # default ""
     <- $topk int # default 16
+    <- $retrieval_method RetrievalMethodCallable # default None
     <- $llm_env dict[str, str] # default None
     # inline
     <- Import[experience/symbolic_tensor/module/symbolic_transform.py]

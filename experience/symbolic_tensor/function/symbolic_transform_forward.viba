@@ -39,6 +39,7 @@ symbolic_transform_forward :=
     <- $query_prompt $func ($ret str <- $task_prompt str <- $input_view_dir str <- $mutable_output_dir str) # default None
     <- $task_prompt str # default ""
     <- $topk int # default 16
+    <- $retrieval_method $func ($ret float <- $query_file_content str <- $key_file_content str) # default None
     <- $llm_method ("coding_agent" | "raw_llm_api") # default raw_llm_api
     <- $llm_env dict[str, str] # default None
     # inline
@@ -57,12 +58,14 @@ symbolic_transform_forward :=
         <- $llm_method
         <- $llm_env)
     <- (NestList[$scalar_input_view Symbolic[torch.Tensor]] <- NestList[$slice_view] <- $input)
-    <- ($batch_input_file_content str <- $scalar_input_view)
+    <- (NestList[$scalar_input_query_view Symbolic[torch.Tensor]] <- NestList[$slice_view] <- $input_query)
+    <- ($batch_input_query_file_content str <- $scalar_input_query_view)
     <- ($select_experience_query_indexes list[torch.Tensor[int]]
         <- Import[experience/symbolic_tensor/function/select_qkv_indexes.viba]
         <- $experience
-        <- $batch_input_file_content
-        <- $topk)
+        <- $batch_input_query_file_content
+        <- $topk
+        <- $retrieval_method)
     <- ($selected_experience_qkv_indexes_list <- NestList[$select_experience_query_indexes])
     <- ($select_experience_indexes <- replace_last_tensor_with_full_slice <- $select_experience_query_indexes)
     <- ($experience_sliced_view ExperienceTensor[Symbolic[torch.Tensor]]

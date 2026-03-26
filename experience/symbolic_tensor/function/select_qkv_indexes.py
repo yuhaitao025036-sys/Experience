@@ -1,14 +1,22 @@
 import os
 import torch
-from typing import List, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from experience.symbolic_tensor.tensor_util.dump_view import dump_view
 
 
-def _get_jaccard_similarity(a: List[str], b: List[str]) -> float:
-    """Compute Jaccard similarity between two lists of keywords."""
-    set_a = set(a)
-    set_b = set(b)
+def default_retrieval_method(query_file_content: str, key_file_content: str) -> float:
+    """Default retrieval: Jaccard similarity on newline-split keywords.
+
+    Args:
+        query_file_content: Raw text content of the query file.
+        key_file_content: Raw text content of the experience key file.
+
+    Returns:
+        Jaccard similarity score between the two keyword sets.
+    """
+    set_a = set(w for w in query_file_content.strip().split("\n") if w.strip())
+    set_b = set(w for w in key_file_content.strip().split("\n") if w.strip())
     if not set_a and not set_b:
         return 0.0
     intersection = set_a & set_b
@@ -65,18 +73,21 @@ def _unzip_to_tensor_list(coordinates: List[List[int]]) -> List[torch.Tensor]:
 
 def select_qkv_indexes(
     weight_tensor: torch.Tensor,
-    query_key_words: List[str],
+    query_file_content: str,
     topk: int,
+    retrieval_method: Optional[Callable[[str, str], float]] = None,
     random_noise: bool = True,
 ) -> List[torch.Tensor]:
     """
-    Select top-k entries from an Experience tensor by Jaccard similarity,
+    Select top-k entries from an Experience tensor by similarity,
     optionally adding Gaussian noise to similarity scores for exploration.
 
     Args:
         weight_tensor: An Experience symbolic tensor (last dim = 3: q, k, v).
-        query_key_words: List of query keywords to match against.
+        query_file_content: Raw text content of the query file.
         topk: Number of top matches to return.
+        retrieval_method: Callable(query_file_content, key_file_content) -> float.
+            Default uses Jaccard similarity on newline-split keywords.
         random_noise: If True, add Gaussian noise to similarity scores.
             Default True. Set False for deterministic test cases.
 
@@ -96,14 +107,14 @@ def select_qkv_indexes(
     # Find query files (last coordinate == 0) in the view
     query_file_paths = _filter_last_coordinate_eq_zero(qkv_data_view_dir)
 
-    # Compute Jaccard similarity for each file
+    # Compute similarity for each file using retrieval_method
+    retrieve = retrieval_method or default_retrieval_method
     similarity_values: List[float] = []
     for query_file_path in query_file_paths:
         real_path = os.path.realpath(query_file_path)
         with open(real_path, "r", encoding="utf-8") as f:
-            content = f.read().strip()
-        query_file_key_words = [w for w in content.split("\n") if w.strip()]
-        similarity = _get_jaccard_similarity(query_key_words, query_file_key_words)
+            key_file_content = f.read()
+        similarity = retrieve(query_file_content, key_file_content)
         similarity_values.append(similarity)
 
     # Compute noise parameters
@@ -171,7 +182,7 @@ if __name__ == "__main__":
         # shape is [2, 3]
 
         # Query for python-related keywords (random_noise=False for deterministic test)
-        result = select_qkv_indexes(t, ["python", "function"], topk=1, random_noise=False)
+        result = select_qkv_indexes(t, "python\nfunction", topk=1, random_noise=False)
         run_test("Returns list of tensors", isinstance(result, list))
         run_test("Two index tensors (2 dims)", len(result) == 2)
         # Row 0 has "python\nfunction\ndef" -> highest Jaccard with ["python", "function"]
@@ -188,7 +199,7 @@ if __name__ == "__main__":
         ]
         t = make_tensor(data, tmpdir)
 
-        result = select_qkv_indexes(t, ["alpha", "beta"], topk=2, random_noise=False)
+        result = select_qkv_indexes(t, "alpha\nbeta", topk=2, random_noise=False)
         run_test("Two index tensors", len(result) == 2)
         run_test("Two results each", len(result[0]) == 2)
         # Row 0 has jaccard(["alpha","beta"], ["alpha","beta"]) = 1.0
@@ -204,9 +215,9 @@ if __name__ == "__main__":
         t = make_tensor(data, tmpdir)
 
         view_dir = os.path.join(tmpdir, t.st_tensor_uid, "qkv_data_view")
-        result1 = select_qkv_indexes(t, ["hello"], topk=1, random_noise=False)
+        result1 = select_qkv_indexes(t, "hello", topk=1, random_noise=False)
         run_test("View dir created", os.path.isdir(view_dir))
-        result2 = select_qkv_indexes(t, ["world"], topk=1, random_noise=False)
+        result2 = select_qkv_indexes(t, "world", topk=1, random_noise=False)
         run_test("View dir still exists (cached)", os.path.isdir(view_dir))
         run_test("Same results shape", len(result1) == len(result2))
 
@@ -215,7 +226,7 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmpdir:
         data = [["keyword", "k", "v"]]
         t = make_tensor(data, tmpdir)
-        result = select_qkv_indexes(t, [], topk=1, random_noise=False)
+        result = select_qkv_indexes(t, "", topk=1, random_noise=False)
         run_test("Still returns results", len(result) == 2)
 
     # Test 5: Random noise changes selection order
@@ -229,9 +240,28 @@ if __name__ == "__main__":
         t = make_tensor(data, tmpdir)
 
         # With random_noise=True, results may vary across runs
-        result_noisy = select_qkv_indexes(t, ["alpha", "beta"], topk=2, random_noise=True)
+        result_noisy = select_qkv_indexes(t, "alpha\nbeta", topk=2, random_noise=True)
         run_test("Noisy result still returns 2 index tensors", len(result_noisy) == 2)
         run_test("Noisy result still returns topk=2 entries", len(result_noisy[0]) == 2)
         print(f"    Noisy selected: dim0={result_noisy[0].tolist()}, dim1={result_noisy[1].tolist()}")
+
+    # Test 6: Custom retrieval_method
+    print("Test 6: Custom retrieval_method")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        data = [
+            ["python\nfunction\ndef", "key_a", "value_a"],
+            ["java\nclass\nobject", "key_b", "value_b"],
+        ]
+        t = make_tensor(data, tmpdir)
+
+        def exact_match(query_content: str, key_content: str) -> float:
+            return 1.0 if query_content.strip() == key_content.strip() else 0.0
+
+        result = select_qkv_indexes(
+            t, "java\nclass\nobject", topk=1,
+            retrieval_method=exact_match, random_noise=False,
+        )
+        run_test("Custom method selects row 1", result[0].item() == 1)
+        print(f"    Selected: dim0={result[0].tolist()}, dim1={result[1].tolist()}")
 
     print("\nAll tests completed.")

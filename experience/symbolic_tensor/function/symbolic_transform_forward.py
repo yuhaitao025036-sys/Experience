@@ -10,7 +10,7 @@ from experience.symbolic_tensor.tensor_util.slice_view import slice_view
 from experience.symbolic_tensor.tensor_util.slice_tensor import slice_tensor
 from experience.symbolic_tensor.tensor_util.dump_view import dump_view
 from experience.symbolic_tensor.function.get_query_tensor import get_query_tensor, default_prompt_for_query
-from experience.symbolic_tensor.function.select_qkv_indexes import select_qkv_indexes
+from experience.symbolic_tensor.function.select_qkv_indexes import select_qkv_indexes, default_retrieval_method
 from experience.llm_client.agent_task import AgentTask
 from experience.llm_client.task_handler import TaskHandler
 
@@ -135,6 +135,7 @@ def symbolic_transform_forward(
     query_prompt: Optional[Callable[..., str]] = None,
     task_prompt: str = "",
     topk: int = 16,
+    retrieval_method: Optional[Callable[[str, str], float]] = None,
     llm_method: str = "raw_llm_api",
     llm_env: Optional[Dict[str, str]] = None,
 ) -> Tuple[torch.Tensor, Any]:
@@ -192,11 +193,10 @@ def symbolic_transform_forward(
         stride = input.stride()
         flat_index = sum(c * s for c, s in zip(coords, stride))
         batch_input_file_content = _read_file_content(input_query, flat_index)
-        query_key_words = [w for w in batch_input_file_content.strip().split("\n") if w.strip()]
-        # print(f"{query_key_words=}")
         # Select top-k experience entries by similarity
         select_experience_query_indexes = select_qkv_indexes(
-            experience, query_key_words, topk
+            experience, batch_input_file_content, topk,
+            retrieval_method=retrieval_method,
         )
         # Record selected indexes (list of tensors, one per dim)
         flat_selected_indexes.append(select_experience_query_indexes)

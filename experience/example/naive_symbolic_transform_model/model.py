@@ -27,6 +27,8 @@ class NaiveModel(nn.Module):
         grad_exp_value_prompt: Callable that builds the experience value gradient prompt. None uses default.
         task_prompt: High-level task description (e.g. "Translate Python To Viba").
         topk: Number of experience entries to select.
+        retrieval_method: Callable(query_file_content, key_file_content) -> float.
+            Default uses Jaccard similarity on newline-split keywords.
         llm_env: Environment variable dict for LLM client. None uses os.environ defaults.
     """
 
@@ -39,6 +41,7 @@ class NaiveModel(nn.Module):
         grad_exp_value_prompt: Optional[Callable[..., str]] = None,
         task_prompt: str = "",
         topk: int = 16,
+        retrieval_method: Optional[Callable] = None,
         llm_env: Optional[Dict[str, str]] = None,
     ):
         super().__init__()
@@ -51,6 +54,7 @@ class NaiveModel(nn.Module):
             grad_exp_value_prompt=grad_exp_value_prompt,
             task_prompt=task_prompt,
             topk=topk,
+            retrieval_method=retrieval_method,
             llm_env=llm_env,
         )
 
