@@ -1,6 +1,6 @@
 # Experience
 
-A PyTorch extension that replaces numeric matrix multiplication with **LLM-powered text computation** inside neural network training loops. Each tensor element stores arbitrary text (code, translations, etc.) in files on disk, while numeric coefficients flow through standard autograd. ExperienceTensor — a key-value store shaped as `[N, 3]` — serves as the learnable "weight" of the model, starting empty and being built up entirely by a patch-based optimizer across training iterations. The LLM acts as the compute kernel: during forward pass it reads experience entries to produce outputs; during backward pass it computes diffs; during the optimizer step `git apply` patches experience entries incrementally.
+A PyTorch extension that replaces numeric matrix multiplication with **LLM-powered text computation** inside neural network training loops. Each tensor element stores arbitrary text (code, translations, etc.) in files on disk, while numeric coefficients flow through standard autograd. An ExperienceTensor — a key-value store shaped as `[N, 3]` — serves as the learnable "weight" of the model, starting empty and being built up entirely by a patch-based optimizer across training iterations. The LLM acts as the compute kernel: during forward pass it reads experience entries to produce outputs; during backward pass it computes diffs; during the optimizer step `patch` applies diffs to experience entries incrementally.
 
 The result is a model that can **learn to perform tasks it was never trained on** by accumulating experience at runtime, demonstrated by translating Python into Viba — a novel DSL that does not exist in the training corpus of any existing LLM.
 
@@ -9,7 +9,7 @@ The result is a model that can **learn to perform tasks it was never trained on*
 ```
 experience/
 ├── symbolic_tensor/     # Core tensor primitives, autograd functions, module, optimizer
-├── llm_client/          # LLM backends: coding agent (Claude SDK) and raw API (OpenAI-compatible)
+├── llm_client/          # LLM backends: raw API (OpenAI-compatible) and coding agent (Claude SDK)
 ├── sparse_util/         # Sparse coordinate operations
 ├── fs_util/             # File system utilities (directory packing, path enumeration)
 ├── test/                # Integration tests and benchmarks
@@ -27,9 +27,9 @@ Gradients propagate through two channels simultaneously:
 
 The `symbolic_grad_registry` (thread-local dictionary) passes symbolic gradient metadata between autograd Function backward calls, since PyTorch autograd strips custom tensor attributes (`st_relative_to`, `st_tensor_uid`) when propagating gradients between Function nodes.
 
-## LLM Backend Methods
+## LLM Backends
 
-Two backends are supported via the `TransformMethod` enum:
+Two backends are supported:
 
 ### `raw_llm_api` (default)
 OpenAI-compatible API (`LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`). Packs directory contents into a prompt, finds files containing the TODO placeholder, and replaces them with LLM responses. Lightweight, no tool access.
@@ -46,7 +46,7 @@ An **ExperienceTensor** is a symbolic tensor of shape `[N, 3]` where each row is
 - **Key** (position 1): Source domain content (e.g., Python code)
 - **Value** (position 2): Target domain content (e.g., code in another language)
 
-It acts as the learnable "weight" of the model — starts empty and is populated during training. The backward pass computes diffs against expected output, and the optimizer applies patches to experience entries via `git apply`.
+It acts as the learnable "weight" of the model — starts empty and is populated during training. The backward pass computes diffs against expected output, and the optimizer applies patches to experience entries via `patch`.
 
 ## Demo: Python to Viba Translation
 
@@ -56,17 +56,43 @@ This example trains a model from scratch to translate Python code into **Viba** 
 
 Existing LLMs have been trained on billions of lines of Python, JavaScript, Haskell, etc. Translating between these tests whether the model can *recall* patterns from pre-training. Viba eliminates this confound — any correct translation demonstrates genuine *generalization* driven by the experience mechanism.
 
-Viba features:
-- `<-` for variable binding / return
-- `$var` for variable references with type annotations
-- `:=` for type/function definitions
-- Sum types with `|` for branching (replacing if/elif/else)
-- `Match[condition -> value, ...]` for pattern matching
-- List comprehensions: `list[$doubled <- $item * 2]`
+Viba is an algebraic data type (ADT) definition language with these core constructs:
+
+```viba
+name := <type_expr>                     # type/function definition
+<type_expr> := <binding> ...            # sequence of bindings
+$var <type>                             # typed variable declaration
+<- $var <type>                          # input binding (argument)
+<- $expr                                # return binding (result)
+# inline                                # inline expansion hint
+```
+
+Type expressions use four ADT combinators:
+
+| Combinator | Syntax | Meaning | Example |
+|-----------|--------|---------|---------|
+| Sum | `\|` | Tagged union (branching) | `\| 'positive' \| 'zero' \| 'negative'` |
+| Product | adjacency / `*` | Tuple composition | `str * int` |
+| Exponent | `<-` | Function type | `int <- int` (unary), `str <- int <- float` (curried) |
+| Tag | `` ` `` | Type-level tag/annotation | `` `JSON`` |
+
+Pattern matching replaces control flow:
+
+```viba
+Match[$x > 0 -> 'positive', $x == 0 -> 'zero', _ -> 'negative']
+```
+
+Generics and collection types:
+
+```viba
+list[$elem int]           # parametric list
+dict['first' = $a, 'second' = $b]   # dict literal
+(int <- int)              # function type as value
+```
 
 ### 1. Dataset
 
-12 Python-to-Viba translation pairs:
+12 Python-to-Viba translation pairs covering fundamental patterns:
 
 | Pattern | Python | Viba |
 |---------|--------|------|
@@ -91,7 +117,7 @@ from pathlib import Path
 
 from experience.symbolic_tensor.tensor_util.make_tensor import make_tensor
 from experience.symbolic_tensor.function.get_edit_distance_ratio import get_edit_distance_ratio
-from experience.symbolic_tensor.optimizer.symbolic_sgd import SymbolicSGD
+from experience.symbolic_tensor.optimizer.st_sgd import StSGD
 from experience.example.naive_symbolic_transform_model.model import NaiveModel
 
 DATASET_PAIRS = [
@@ -122,9 +148,9 @@ with tempfile.TemporaryDirectory() as tmpdir:
 ### 4. Training Loop
 
 ```python
-    model = NaiveModel(forward_prompt="Translate Python To Viba", topk=1)
+    model = NaiveModel(task_prompt="Translate Python To Viba", topk=1)
     model.load_experience(experience_tensor)
-    optimizer = SymbolicSGD(model.parameters(), lr=1.0)
+    optimizer = StSGD(model.parameters(), lr=1.0)
 
     for iteration in range(1, 6):
         optimizer.zero_grad()
@@ -140,7 +166,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
         # Backward: computes symbolic gradients (diffs) via autograd
         loss.mean().backward()
 
-        # Optimizer step: applies patches to experience via git apply
+        # Optimizer step: applies patches to experience via patch
         optimizer.step()
 ```
 
@@ -180,7 +206,7 @@ Key observations:
 - The model **starts with no Viba knowledge** — iteration 1 outputs are in random languages (Go, Rust, TypeScript-like).
 - By iteration 3, the LLM begins using Viba syntax (`<-`, `$var`, `:=`) for some outputs.
 - By iteration 5, several outputs match expected Viba code exactly (loss < 0.01 for branch, closure, guard).
-- Experience entries accumulate correct Python→Viba mappings during training — e.g., entry `[22,23]` stores `classify(x) -> classify := | 'positive' | ...`.
+- Experience entries accumulate correct Python-to-Viba mappings during training — e.g., entry `[22,23]` stores `classify(x) -> classify := | 'positive' | ...`.
 - All 34 patches applied cleanly with 0% rejection rate across 5 iterations.
 
 ## How It Works
@@ -196,7 +222,7 @@ Key observations:
 │   └── 1/1/data             # Multi-digit index 11
 ```
 
-### Forward Pass
+### Forward Pass (`st_matmul_forward`)
 
 1. **Query Generation**: LLM extracts semantic keywords from each input element
 2. **Experience Retrieval**: Jaccard similarity selects top-k relevant experience entries
@@ -204,7 +230,7 @@ Key observations:
 4. **Task Dispatch**: `TaskHandler` dispatches `AgentTask` objects to the LLM backend
 5. **Copy-back**: Results propagate through symlinks to parent storage
 
-### Backward Pass
+### Backward Pass (`st_matmul_backward`)
 
 Computes gradients for both **input** and **experience** through numeric + symbolic channels.
 
@@ -212,14 +238,17 @@ Computes gradients for both **input** and **experience** through numeric + symbo
 
 **Grad Experience** (aggregated): The forward pass index list is transposed to group by experience entry (identifying which entries were used and by how many inputs). Cold-start padding randomly samples empty experience entries so they still receive gradients. The backward runs twice — once for key, once for value — with domain-specific prompts. The LLM merges multiple grad_output signals and writes improved experience files. Numerically, `grad_experience.data` scatter-adds `1.0` per usage count.
 
-### Optimizer
+### Optimizer (`StSGD`)
 
-`SymbolicSGD` computes `get_diff_tensor` then applies `patch_tensor` via `git apply` — incremental patch-based updates instead of full regeneration.
+Two-channel update per step:
+- **Numeric**: `param.data = (1 - lr) * param.data + lr * grad.data`
+- **Symbolic**: Applies unified diff patches from grad storage to param storage via `patch_tensor` (uses the `patch` CLI with fuzz=3). Only patches elements where `grad.data != 0` (key+value dims).
+- **Query auto-update**: After patching key+value, derives query content by running `get_query_tensor` on the updated kv, merging LLM-generated keywords, sorting and deduplicating.
 
 ## Key Design Decisions
 
 - **LLM as compute kernel**: Replaces matrix multiplication with semantic reasoning
-- **Patch-based optimizer**: `git diff`/`git apply` for efficient incremental experience updates
+- **Patch-based optimizer**: `diff`/`patch` for efficient incremental experience updates
 - **Two LLM backends**: `raw_llm_api` (default, lightweight) and `coding_agent` (tool access)
 - **Symlinks for views, copies for mutations**: Shared storage for context, independent copies for LLM writes
 - **Experience starts empty**: Learned entirely at runtime, not pre-seeded
