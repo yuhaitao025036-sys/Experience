@@ -37,7 +37,7 @@ step :=
     <- ($kv_points <- replace_last_tensor_with_slice <- $raw_selected_param_points <- slice(1, 3, None))
 
     # ── Numeric channel ──
-    <- (void <- '''param.data = (1 - lr) * param.data + lr * grad.data''' <- $select_param_points)
+    <- (void <- { param.data = (1 - lr) * param.data + lr * grad.data } <- $select_param_points)
 
     # ── Symbolic channel ──
     <- ($kv_param <- $slice_view <- $param <- $kv_points)

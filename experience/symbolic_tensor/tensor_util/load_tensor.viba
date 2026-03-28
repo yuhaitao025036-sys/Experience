@@ -3,7 +3,7 @@ load_tensor :=
     <- $load_dir str
     <- $relative_to str
     # inline
-    <- Assert[IsADumpedTensorDir[$load_dir]]
+    <- { assert IsADumpedTensorDir[$load_dir] }
     <- $nested_data from_load_dir
     <- Import[experience/symbolic_tensor/tensor_util/make_tensor.viba]
     <- $shape from_load_dir
