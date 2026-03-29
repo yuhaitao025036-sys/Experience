@@ -41,6 +41,8 @@ def _read_file_content(tensor: torch.Tensor, flat_index: int) -> str:
         os.path.join(*digits),
         "data",
     )
+    if not os.path.isfile(path):
+        return None
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
@@ -193,6 +195,12 @@ def st_moe_forward(
         stride = input.stride()
         flat_index = sum(c * s for c, s in zip(coords, stride))
         batch_input_file_content = _read_file_content(input_query, flat_index)
+
+        # Skip padded/empty positions (no content → no query → no moe output)
+        if batch_input_file_content is None:
+            flat_selected_indexes.append([])
+            continue
+
         # Select top-k experience entries by similarity
         select_experience_query_indexes = select_qkv_indexes(
             experience, batch_input_file_content, topk,

@@ -59,6 +59,16 @@ def _str_to_digit_list(s: str) -> List[str]:
     return list(s)
 
 
+def _flat_index_to_coords(flat_index: int, shape: List[int]) -> List[int]:
+    """Convert a flat index to multi-dimensional coordinates given a shape."""
+    coords = []
+    for dim_size in reversed(shape):
+        coords.append(flat_index % dim_size)
+        flat_index //= dim_size
+    coords.reverse()
+    return coords
+
+
 def make_tensor(nested_data: NestedList, relative_to: str, symlink: bool = False) -> torch.Tensor:
     """
     Create a symbolic tensor from a nested list of strings or Paths, persisting each
@@ -104,6 +114,7 @@ def make_tensor(nested_data: NestedList, relative_to: str, symlink: bool = False
         )
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
         if isinstance(opt_file_content_or_path, Path):
+            src_path = str(opt_file_content_or_path)
             if symlink:
                 rel_src = os.path.relpath(
                     str(opt_file_content_or_path.resolve()),
@@ -111,19 +122,23 @@ def make_tensor(nested_data: NestedList, relative_to: str, symlink: bool = False
                 )
                 os.symlink(rel_src, file_path)
             else:
-                shutil.copy2(str(opt_file_content_or_path), file_path)
+                # Resolve symlinks for existence check; skip missing files
+                real_src = os.path.realpath(src_path)
+                if not os.path.isfile(real_src):
+                    continue
+                shutil.copy2(src_path, file_path)
         else:
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(opt_file_content_or_path)
+        # Set coefficient to 1.0 for elements that got a file
+        coords = _flat_index_to_coords(i, shape)
+        tensor[tuple(coords)] = 1
 
     # Save shape as JSON
     shape_path = os.path.join(tensor_root_dir, "shape")
     os.makedirs(os.path.dirname(shape_path), exist_ok=True)
     with open(shape_path, "w", encoding="utf-8") as f:
         f.write(json.dumps(shape))
-
-    # Fill tensor with ones: nonzero means content is saved, value represents importance
-    tensor.fill_(1)
 
     return tensor
 

@@ -18,14 +18,11 @@ def _get_storage_path(tensor: torch.Tensor, flat_index: int) -> Path:
     )
 
 
-def dense_to_sparse(
+def _dense_to_sparse_impl(
     input: torch.Tensor,
     view: bool = False,
 ) -> Tuple[torch.Tensor, List[torch.Tensor], List[int]]:
-    """Convert a dense symbolic tensor to sparse representation.
-
-    Finds nonzero elements (elements with content on disk) and extracts
-    them into a compact 1D tensor.
+    """Core implementation: extract nonzero elements into 1D sparse tensor.
 
     Args:
         input: A dense symbolic tensor.
@@ -33,11 +30,7 @@ def dense_to_sparse(
             If False, output has independent copies.
 
     Returns:
-        A tuple of:
-        - output: 1D symbolic tensor containing only the nonzero elements.
-        - indexes: list[torch.Tensor[int]], one per dimension of input,
-            containing the coordinates of the nonzero elements.
-        - shape: Original dense shape as list[int].
+        (output, indexes, shape) tuple.
     """
     shape = list(input.shape)
     indexes = list(torch.nonzero(input.data, as_tuple=True))
@@ -59,6 +52,30 @@ def dense_to_sparse(
     output = make_tensor(paths, input.st_relative_to, symlink=view)
 
     return output, indexes, shape
+
+
+def dense_to_sparse(
+    input: torch.Tensor,
+    view: bool = False,
+) -> Tuple[torch.Tensor, List[torch.Tensor], List[int]]:
+    """Convert a dense symbolic tensor to sparse representation.
+
+    Finds nonzero elements (elements with content on disk) and extracts
+    them into a compact 1D tensor.
+
+    Args:
+        input: A dense symbolic tensor.
+        view: If True, output shares storage with input via symlinks.
+            If False, output has independent copies.
+
+    Returns:
+        A tuple of:
+        - output: 1D symbolic tensor containing only the nonzero elements.
+        - indexes: list[torch.Tensor[int]], one per dimension of input,
+            containing the coordinates of the nonzero elements.
+        - shape: Original dense shape as list[int].
+    """
+    return _dense_to_sparse_impl(input, view)
 
 
 if __name__ == "__main__":

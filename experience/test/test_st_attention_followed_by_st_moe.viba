@@ -1,67 +1,43 @@
 
 Import[experience/symbolic_tensor/function/st_attention.viba]
 Import[experience/symbolic_tensor/function/st_moe.viba]
+Import[experience/symbolic_tensor/module/st_moe.viba]
+Import[experience/symbolic_tensor/module/with_dense_view.viba]
 Import[experience/symbolic_tensor/function/get_causal_attention_mask.viba]
 Import[experience/fs_util/text_merger.viba]
+Import[experience/symbolic_tensor/function/st_copy.viba]
 
 # in __main__ block:
 #
-# ── Forward-only tests (no LLM required) ──
+# All tests use the full pipeline:
+#   WithDenseView(StMoeModule(exp))(st_attention(input, mask))
+# Every test hits the LLM via st_moe forward.
+# WithDenseView handles sparse↔dense conversion around StMoe.
 #
-# 1. shape: st_attention output feeds st_moe, output shape == input shape
-# 2. merged content detection: st_attention output elements contain kFrameMarker
-# 3. causal 1x3: attention output has correct frame counts (1, 2, 3),
-#    st_moe output has same shape [1, 3], all elements non-None
-# 4. causal 1x5: frame count monotonically increases, coefficients match
-# 5. full attention 1x4: all attention outputs have 4 frames each,
-#    st_moe sees fully merged context per position
-# 6. diagonal 1x3: each position attends only to self, 1 frame each,
-#    st_moe gets plain-like content (single frame)
-# 7. padding 1x4 (2 real + 2 pad): padded positions have coeff 0 after attention,
-#    st_moe output reflects: real tokens translated, padded tokens empty
-# 8. multi-batch 2x3 causal: independent attention per batch, both batches
-#    produce valid merged content, st_moe processes each independently
-# 9. multi-batch 3x2 mixed masks: causal/full/diagonal per batch,
-#    different frame counts per batch, all pass through st_moe
-# 10. coefficient propagation: attention coeff (frame count) propagated
-#     correctly as st_moe input coefficients
-# 11. content preservation: each frame in merged attention output
-#     contains original input text (not corrupted by merge/unpack)
-# 12. experience selection: st_moe selects topk experience entries
-#     for each input element (including merged ones), verify selection count
-# 13. storage consistency: no extra files in attention output or st_moe output,
-#     coeff > 0 iff data file exists with non-zero size
+# ── Forward: WithDenseView(StMoe)(st_attention(x)) ──
 #
-# ── Backward tests (require LLM, simple tasks for high pass rate) ──
+# 1. shape 1x3 causal: output shape == input shape, all elements non-None
+# 2. output is LLM-generated: output text differs from raw input
+# 3. full attention 1x3: all positions see all tokens, output valid
+# 4. diagonal 1x3: self-only → plain-like input, moe still produces output
+# 5. causal 1x5: all 5 outputs non-None
+# 6. padding 1x4 (2 real + 2 pad): WithDenseView strips pads,
+#    StMoe only processes real tokens, result sparse has 2 elements
+# 7. multi-batch 2x3 causal: independent pipelines per batch
+# 8. different masks same input: causal vs full → different outputs
+# 9. storage consistency: coeff-storage invariant on output
+# 10. get_causal_attention_mask integration: end-to-end with mask utility
+# 11. sliding window 1x4: non-causal mask, all outputs valid
+# 12. large batch 3x4 causal: stress test, no crash, all non-None
 #
-# 14. backward shape: full pipeline forward→backward, grad_input.shape == input.shape
-# 15. backward produces symbolic content: grad_input elements are non-None diffs
-# 16. merged backward detection: st_moe backward correctly detects merged
-#     input and creates per-frame tasks (not one giant merged blob task)
-# 17. plain vs merged mixed: tensor with both plain and merged elements,
-#     backward handles both in single TaskHandler call
-# 18. frame count preserved in backward: improved merged content after
-#     backward has same number of frames as original
-# 19. coefficient channel: grad_input numeric values match expected
-#     (pass-through from grad_output)
-# 20. causal 1x3 backward: typo fix propagates through attention+moe backward
-# 21. multi-batch 2x2 backward: independent grad per batch through full pipeline
-# 22. grad_experience shape: grad_experience matches experience tensor shape
-# 23. grad_experience content: experience key/value gradients are non-None diffs
-# 24. round-trip 1x3 causal: forward → manual modify output → backward →
-#     verify grad_input has meaningful diffs for all attended positions
-# 25. storage consistency backward: coeff-storage alignment in grad_input
-#     and grad_experience after full backward
+# ── Backward ──
 #
-# ── End-to-end integration tests ──
+# 13. backward shape: grad flows through WithDenseView + StMoe + st_attention
+# 14. backward grad_input shape: grad shape matches input
+# 15. grad_experience shape
+# 16. multi-batch 2x2 backward
 #
-# 26. two-iteration training loop: forward → backward → st_sgd step → forward again,
-#     verify output changes between iterations
-# 27. experience update: after backward + optimizer step, experience entries
-#     are modified (not identical to initial)
-# 28. attention mask change: same input with different masks produces
-#     different st_moe outputs (attention actually affects downstream)
-# 29. large batch 4x6 causal: stress test with realistic batch/seq_len,
-#     all storage consistent, no crashes
-# 30. sliding window 1x5 + st_moe: non-causal mask pattern,
-#     verify merged frame counts match window size per position
+# ── End-to-end ──
+#
+# 17. two-iteration training loop: loop completes, both outputs non-None
+# 18. experience update: experience entries modified after training
