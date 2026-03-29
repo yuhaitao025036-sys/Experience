@@ -143,6 +143,21 @@ def slice_attention_backward_grad_input(
         assign_tensor(gi_view, diff)
         shutil.rmtree(ws_dir)
 
+    # Enforce invariant: coeff > 0 iff storage file has real content.
+    # Empty diffs (0-byte files from assign_tensor) must have coeff = 0.
+    for i in range(grad_input.numel()):
+        digits = list(str(i))
+        path = os.path.join(
+            grad_input.st_relative_to,
+            grad_input.st_tensor_uid,
+            "storage",
+            os.path.join(*digits),
+            "data",
+        )
+        path = os.path.realpath(path)
+        if not os.path.isfile(path) or os.path.getsize(path) == 0:
+            grad_input.data.flatten()[i] = 0.0
+
     return grad_input
 
 

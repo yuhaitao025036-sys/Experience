@@ -111,11 +111,12 @@ def slice_view(
     for combo in itertools.product(*all_indices):
         selected_paths.append(_get_storage_path(input, list(combo)))
 
-    # Touch storage files that don't exist yet (e.g., from make_none_tensor)
+    # Ensure parent directories exist for write-through via symlinks.
+    # Do NOT touch empty files — that would create 0-byte storage entries
+    # that violate the invariant: coeff > 0 iff file has real content.
     for p in selected_paths:
-        if not p.exists():
+        if not p.parent.exists():
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.touch()
 
     # Build nested list matching output shape
     if output_shape:
@@ -287,12 +288,13 @@ if __name__ == "__main__":
         view = slice_view(none_t, [0, torch.tensor([1, 2])])
         run_test("View shape is [2]", list(view.shape) == [2])
 
-        # Symlinks should exist (not dangling)
+        # Symlinks should exist (dangling — target file not yet created)
         view_root = os.path.join(tmpdir, view.st_tensor_uid, "storage")
         link0 = os.path.join(view_root, "0", "data")
         run_test("View symlink exists", os.path.islink(link0))
         target_real = os.path.realpath(link0)
-        run_test("Target file exists (touched)", os.path.isfile(target_real))
+        run_test("Target parent dir exists", os.path.isdir(os.path.dirname(target_real)))
+        run_test("Target file not touched (dangling)", not os.path.isfile(target_real))
 
         # Write through view via assign_tensor
         src = mt(["hello", "world"], tmpdir)

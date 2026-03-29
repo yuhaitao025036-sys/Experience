@@ -885,6 +885,448 @@ if __name__ == "__main__":
         run_test("returns None for non-grad input", result is None)
 
     # ================================================================
+    # MULTI-BATCH STORAGE CONSISTENCY TESTS
+    # Verify: exact file counts, coefficient-storage alignment,
+    # no extra files generated, varying sequence lengths
+    # ================================================================
+
+    print("\n--- Multi-Batch Storage Consistency Tests ---\n")
+
+    def count_data_files(tensor):
+        """Count all 'data' files under a tensor's storage directory."""
+        storage_dir = os.path.join(
+            tensor.st_relative_to, tensor.st_tensor_uid, "storage"
+        )
+        if not os.path.isdir(storage_dir):
+            return 0
+        count = 0
+        for root, dirs, files in os.walk(storage_dir):
+            for f in files:
+                if f == "data":
+                    count += 1
+        return count
+
+    def data_file_sizes(tensor):
+        """Return dict {flat_index: file_size} for all data files."""
+        storage_dir = os.path.join(
+            tensor.st_relative_to, tensor.st_tensor_uid, "storage"
+        )
+        result = {}
+        if not os.path.isdir(storage_dir):
+            return result
+        for root, dirs, files in os.walk(storage_dir):
+            for f in files:
+                if f == "data":
+                    full_path = os.path.join(root, f)
+                    # Reconstruct flat index from path segments between storage/ and /data
+                    rel = os.path.relpath(full_path, storage_dir)
+                    # rel looks like "1/2/data" for flat_index 12, or "5/data" for 5
+                    parts = rel.split(os.sep)
+                    flat_idx = int("".join(parts[:-1]))  # exclude "data"
+                    result[flat_idx] = os.path.getsize(os.path.realpath(full_path))
+        return result
+
+    def check_coeff_storage_consistency(tensor, label):
+        """Verify coefficient > 0 iff data file exists with non-zero size."""
+        numel = tensor.numel()
+        sizes = data_file_sizes(tensor)
+        all_ok = True
+        for i in range(numel):
+            coeff = tensor.data.flatten()[i].item()
+            has_file = i in sizes
+            file_nonempty = has_file and sizes[i] > 0
+            if coeff > 0 and not file_nonempty:
+                run_test(f"{label}[{i}] coeff={coeff} but no content file", False,
+                         "file with content", f"has_file={has_file}, size={sizes.get(i, 'N/A')}")
+                all_ok = False
+            elif coeff == 0 and file_nonempty:
+                run_test(f"{label}[{i}] coeff=0 but has content file (size={sizes[i]})", False,
+                         "no file or empty", f"size={sizes[i]}")
+                all_ok = False
+        if all_ok:
+            run_test(f"{label} coeff-storage consistent ({numel} elements)", True)
+
+    # ================================================================
+    # Test 35: Single batch, seq_len=1 — minimal case
+    # ================================================================
+    print("Test 35: Storage consistency — 1x1 minimal")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        inp = make_tensor([["hello"]], tmpdir)
+        mask = torch.ones(1, 1, 1, dtype=torch.bool)
+        output = st_attention(inp, mask)
+
+        run_test("input files = 1", count_data_files(inp) == 1)
+        run_test("output files = 1", count_data_files(output) == 1)
+        check_coeff_storage_consistency(output, "output")
+
+    # ================================================================
+    # Test 36: Single batch, seq_len=7, causal mask
+    # ================================================================
+    print("Test 36: Storage consistency — 1x7 causal")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tokens = [f"tok{i}" for i in range(7)]
+        inp = make_tensor([tokens], tmpdir)
+        mask = torch.tril(torch.ones(1, 7, 7, dtype=torch.bool))
+        output = st_attention(inp, mask)
+
+        run_test("input files = 7", count_data_files(inp) == 7)
+        # All 7 positions attended (causal: each sees at least itself)
+        run_test("output files = 7", count_data_files(output) == 7)
+        check_coeff_storage_consistency(output, "output")
+        # Verify coefficients = [1, 2, 3, 4, 5, 6, 7]
+        for i in range(7):
+            expected = float(i + 1)
+            actual = output.data[0, i].item()
+            run_test(f"output coeff[{i}] = {expected}",
+                     abs(actual - expected) < 1e-5, expected, actual)
+
+    # ================================================================
+    # Test 37: 3 batches x seq_len=5, mixed masks (causal / full / empty)
+    # ================================================================
+    print("Test 37: Storage consistency — 3x5 mixed masks")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        inp = make_tensor([
+            ["a0", "a1", "a2", "a3", "a4"],
+            ["b0", "b1", "b2", "b3", "b4"],
+            ["c0", "c1", "c2", "c3", "c4"],
+        ], tmpdir)
+        mask = torch.zeros(3, 5, 5, dtype=torch.bool)
+        # Batch 0: causal
+        mask[0] = torch.tril(torch.ones(5, 5, dtype=torch.bool))
+        # Batch 1: full attention
+        mask[1] = True
+        # Batch 2: no attention at all
+        # mask[2] stays all False
+
+        output = st_attention(inp, mask)
+
+        run_test("input files = 15", count_data_files(inp) == 15)
+        # Batch 0: 5 attended; Batch 1: 5 attended; Batch 2: 0 attended → 10 output files
+        run_test("output files = 10", count_data_files(output) == 10)
+        check_coeff_storage_consistency(output, "output")
+        # Batch 2 should all be zero
+        for i in range(5):
+            run_test(f"batch2 token{i} coeff=0",
+                     output.data[2, i].item() == 0.0)
+
+    # ================================================================
+    # Test 38: 2 batches with very different effective lengths via padding
+    # Batch 0: 8 real + 2 pad; Batch 1: 2 real + 8 pad
+    # ================================================================
+    print("Test 38: Storage consistency — 2x10 asymmetric padding")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        b0 = [f"r{i}" for i in range(8)] + ["<p>", "<p>"]
+        b1 = ["x0", "x1"] + [f"<p>" for _ in range(8)]
+        inp = make_tensor([b0, b1], tmpdir)
+        token_mask = torch.zeros(2, 10, dtype=torch.bool)
+        token_mask[0, :8] = True
+        token_mask[1, :2] = True
+        mask = get_causal_attention_mask(token_mask)
+        output = st_attention(inp, mask)
+
+        run_test("input files = 20", count_data_files(inp) == 20)
+        # Batch 0: 8 real tokens attended; Batch 1: 2 real → 10 total output files
+        run_test("output files = 10", count_data_files(output) == 10)
+        check_coeff_storage_consistency(output, "output")
+        # Batch 0 token 7 (last real): coeff = 8
+        run_test("b0 t7 coeff=8", abs(output.data[0, 7].item() - 8.0) < 1e-5)
+        # Batch 1 padded positions should be zero
+        for i in range(2, 10):
+            run_test(f"b1 pad[{i}] coeff=0", output.data[1, i].item() == 0.0)
+
+    # ================================================================
+    # Test 39: 4 batches x seq_len=3, diagonal mask
+    # Each token sees only itself → output files = attended count
+    # ================================================================
+    print("Test 39: Storage consistency — 4x3 diagonal")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        inp = make_tensor([
+            ["p0", "p1", "p2"],
+            ["q0", "q1", "q2"],
+            ["r0", "r1", "r2"],
+            ["s0", "s1", "s2"],
+        ], tmpdir)
+        mask = torch.eye(3, dtype=torch.bool).unsqueeze(0).expand(4, -1, -1).clone()
+        output = st_attention(inp, mask)
+
+        run_test("input files = 12", count_data_files(inp) == 12)
+        # Diagonal: every position attended to self → 12 output files
+        run_test("output files = 12", count_data_files(output) == 12)
+        check_coeff_storage_consistency(output, "output")
+        # All coefficients should be 1.0 (each sees exactly 1 token)
+        all_one = (output.data == 1.0).all().item()
+        run_test("all coefficients = 1.0", all_one)
+
+    # ================================================================
+    # Test 40: 2 batches x seq_len=6, sliding window (w=2) vs full
+    # ================================================================
+    print("Test 40: Storage consistency — 2x6 sliding vs full")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tokens = [f"t{i}" for i in range(6)]
+        inp = make_tensor([tokens, tokens], tmpdir)
+        mask = torch.zeros(2, 6, 6, dtype=torch.bool)
+        # Batch 0: sliding window (i sees [max(0,i-1), i])
+        for i in range(6):
+            for j in range(max(0, i - 1), i + 1):
+                mask[0, i, j] = True
+        # Batch 1: full attention
+        mask[1] = True
+        output = st_attention(inp, mask)
+
+        run_test("input files = 12", count_data_files(inp) == 12)
+        # Batch 0: all 6 see at least self; Batch 1: all 6 → 12 output files
+        run_test("output files = 12", count_data_files(output) == 12)
+        check_coeff_storage_consistency(output, "output")
+        # Batch 0 token 0: coeff=1 (sees itself only)
+        run_test("b0 t0 coeff=1", abs(output.data[0, 0].item() - 1.0) < 1e-5)
+        # Batch 0 token 3: coeff=2 (sees t2, t3)
+        run_test("b0 t3 coeff=2", abs(output.data[0, 3].item() - 2.0) < 1e-5)
+        # Batch 1 all: coeff=6
+        for i in range(6):
+            run_test(f"b1 t{i} coeff=6", abs(output.data[1, i].item() - 6.0) < 1e-5)
+
+    # ================================================================
+    # Test 41: Large multi-batch — 3x8 causal with flat index > 9 (multi-digit)
+    # Verifies multi-digit flat index path construction (e.g., 12 → 1/2/data)
+    # ================================================================
+    print("Test 41: Storage consistency — 3x8 multi-digit flat indices")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        inp = make_tensor([
+            [f"a{i}" for i in range(8)],
+            [f"b{i}" for i in range(8)],
+            [f"c{i}" for i in range(8)],
+        ], tmpdir)
+        mask = torch.tril(torch.ones(3, 8, 8, dtype=torch.bool))
+        output = st_attention(inp, mask)
+
+        run_test("input files = 24", count_data_files(inp) == 24)
+        # All causal: all 24 positions attended → 24 output files
+        run_test("output files = 24", count_data_files(output) == 24)
+        check_coeff_storage_consistency(output, "output")
+        # Verify multi-digit flat indices: batch 1 token 0 = flat index 8
+        fi_8 = get_frames(output, 8)
+        run_test("flat_index=8 (b1,t0) 1 frame", fi_8 is not None and len(fi_8) == 1)
+        # batch 2 token 7 = flat index 23 → causal coeff=8
+        run_test("flat_index=23 coeff=8", abs(output.data[2, 7].item() - 8.0) < 1e-5)
+        fi_23 = get_frames(output, 23)
+        run_test("flat_index=23 has 8 frames", fi_23 is not None and len(fi_23) == 8)
+
+    # ================================================================
+    # Test 42: Sparse cross-batch mask — some batches attended, some not
+    # 5 batches x seq_len=2: only batch 0,2,4 have any attention
+    # ================================================================
+    print("Test 42: Storage consistency — 5x2 sparse batches")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        inp = make_tensor([
+            ["m0", "m1"], ["n0", "n1"], ["o0", "o1"],
+            ["p0", "p1"], ["q0", "q1"],
+        ], tmpdir)
+        mask = torch.zeros(5, 2, 2, dtype=torch.bool)
+        # Only even batches get attention
+        mask[0] = True  # full
+        mask[2] = torch.eye(2, dtype=torch.bool)  # diagonal
+        mask[4] = torch.tril(torch.ones(2, 2, dtype=torch.bool))  # causal
+        output = st_attention(inp, mask)
+
+        run_test("input files = 10", count_data_files(inp) == 10)
+        # Batch 0: 2 files; Batch 1: 0; Batch 2: 2; Batch 3: 0; Batch 4: 2 → 6
+        expected_output_files = 6
+        run_test(f"output files = {expected_output_files}",
+                 count_data_files(output) == expected_output_files)
+        check_coeff_storage_consistency(output, "output")
+        # Odd batches all zero
+        for b in [1, 3]:
+            for t in range(2):
+                run_test(f"batch{b} token{t} coeff=0",
+                         output.data[b, t].item() == 0.0)
+
+    # ================================================================
+    # Test 43: Single large batch seq_len=12 with partial padding
+    # Tests flat indices up to 11 (still single-digit safe) and padding
+    # ================================================================
+    print("Test 43: Storage consistency — 1x12 partial padding")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tokens = [f"w{i}" for i in range(9)] + ["<p>", "<p>", "<p>"]
+        inp = make_tensor([tokens], tmpdir)
+        token_mask = torch.zeros(1, 12, dtype=torch.bool)
+        token_mask[0, :9] = True
+        mask = get_causal_attention_mask(token_mask)
+        output = st_attention(inp, mask)
+
+        run_test("input files = 12", count_data_files(inp) == 12)
+        # 9 real tokens attended + 3 padded tokens (zero)
+        run_test("output files = 9", count_data_files(output) == 9)
+        check_coeff_storage_consistency(output, "output")
+        # Last real token coeff=9
+        run_test("t8 coeff=9", abs(output.data[0, 8].item() - 9.0) < 1e-5)
+        # Padded tokens
+        for i in range(9, 12):
+            run_test(f"pad t{i} coeff=0", output.data[0, i].item() == 0.0)
+
+    # ================================================================
+    # Test 44: 2 batches x seq_len=4, return_view=True — symlink storage
+    # Verifies symlink-based output has correct file count and consistency
+    # ================================================================
+    print("Test 44: Storage consistency — 2x4 return_view=True")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        inp = make_tensor([
+            ["v0", "v1", "v2", "v3"],
+            ["u0", "u1", "u2", "u3"],
+        ], tmpdir)
+        mask = torch.zeros(2, 4, 4, dtype=torch.bool)
+        # Batch 0: causal
+        mask[0] = torch.tril(torch.ones(4, 4, dtype=torch.bool))
+        # Batch 1: only last token sees all
+        mask[1, 3, :] = True
+        output = st_attention(inp, mask, return_view=True)
+
+        run_test("output shape (2, 4)", list(output.shape) == [2, 4])
+        # Batch 0: 4 positions with attention; Batch 1: 1 position (token 3) + 0 for others
+        expected_files = 4 + 1  # batch 0 all attended + batch 1 only token 3
+        run_test(f"output files = {expected_files}",
+                 count_data_files(output) == expected_files)
+        check_coeff_storage_consistency(output, "output")
+        # Batch 1 tokens 0-2 should be zero
+        for i in range(3):
+            run_test(f"b1 t{i} coeff=0", output.data[1, i].item() == 0.0)
+        # Batch 1 token 3 coeff=4
+        run_test("b1 t3 coeff=4", abs(output.data[1, 3].item() - 4.0) < 1e-5)
+
+    # ================================================================
+    # Test 45: Backward storage consistency — 2x3 causal with LLM
+    # Check grad_input has correct file count and coeff-storage alignment
+    # ================================================================
+    print("Test 45: Backward storage — 2x3 causal grad_input")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        inp = make_tensor([
+            ["helo\n", "wrld\n", "tset\n"],
+            ["aple\n", "bnana\n", "grpe\n"],
+        ], tmpdir)
+        inp.requires_grad_(True)
+        mask = torch.tril(torch.ones(2, 3, 3, dtype=torch.bool))
+
+        sliced = slice_attention_forward(inp, mask)
+        sliced.requires_grad_(True)
+        merged = merge_forward(sliced, axis=-1)
+
+        # Create modifications: fix typos
+        modified_data = []
+        for b in range(2):
+            row = []
+            for t in range(3):
+                flat = b * 3 + t
+                content = read_storage(merged, flat) or ""
+                content = content.replace("helo", "hello").replace("wrld", "world")
+                content = content.replace("tset", "test").replace("aple", "apple")
+                content = content.replace("bnana", "banana").replace("grpe", "grape")
+                row.append(content)
+            modified_data.append(row)
+        modified = make_tensor(modified_data, tmpdir)
+        grad_out = get_diff_tensor(merged, modified)
+        grad_sliced = merge_backward(grad_out, sliced, merged, axis=-1)
+        grad_input = slice_attention_backward(
+            grad_sliced, inp, sliced, mask,
+            task_prompt="Fix all spelling errors.",
+        )
+
+        run_test("grad_input shape [2, 3]", list(grad_input.shape) == [2, 3])
+        # All 6 input positions should get gradient (all are attended by at least one row)
+        gi_file_count = count_data_files(grad_input)
+        run_test("grad_input files = 6", gi_file_count == 6)
+        check_coeff_storage_consistency(grad_input, "grad_input")
+
+    # ================================================================
+    # Test 46: Backward storage — 3x2 varied masks (all have some attention)
+    # Batch 0: full, Batch 1: diagonal, Batch 2: causal
+    # ================================================================
+    print("Test 46: Backward storage — 3x2 varied mask grad")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        inp = make_tensor([
+            ["old cat\n", "big dog\n"],
+            ["red car\n", "blu sky\n"],
+            ["dry ice\n", "hot sun\n"],
+        ], tmpdir)
+        inp.requires_grad_(True)
+        mask = torch.zeros(3, 2, 2, dtype=torch.bool)
+        mask[0] = True  # full
+        mask[1] = torch.eye(2, dtype=torch.bool)  # diagonal
+        mask[2] = torch.tril(torch.ones(2, 2, dtype=torch.bool))  # causal
+
+        sliced = slice_attention_forward(inp, mask)
+        sliced.requires_grad_(True)
+        merged = merge_forward(sliced, axis=-1)
+
+        modified_data = []
+        for b in range(3):
+            row = []
+            for t in range(2):
+                flat = b * 2 + t
+                content = read_storage(merged, flat) or ""
+                content = content.replace("old", "young").replace("big", "small")
+                content = content.replace("red", "green").replace("blu", "blue")
+                content = content.replace("dry", "wet").replace("hot", "cold")
+                row.append(content)
+            modified_data.append(row)
+        modified = make_tensor(modified_data, tmpdir)
+        grad_out = get_diff_tensor(merged, modified)
+        grad_sliced = merge_backward(grad_out, sliced, merged, axis=-1)
+        grad_input = slice_attention_backward(
+            grad_sliced, inp, sliced, mask,
+            task_prompt="Replace adjectives with better ones.",
+        )
+
+        run_test("grad_input shape [3, 2]", list(grad_input.shape) == [3, 2])
+        check_coeff_storage_consistency(grad_input, "grad_input")
+        gi_b0_0 = read_storage(grad_input, 0)
+        gi_b1_0 = read_storage(grad_input, 2)
+        gi_b2_0 = read_storage(grad_input, 4)
+        run_test("b0 t0 gets symbolic grad", gi_b0_0 is not None)
+        run_test("b1 t0 gets symbolic grad", gi_b1_0 is not None)
+        run_test("b2 t0 gets symbolic grad", gi_b2_0 is not None)
+
+    # ================================================================
+    # Test 47: Forward+backward round-trip storage — 1x5 causal
+    # Verify all three tensors (input, output, grad_input) have correct files
+    # ================================================================
+    print("Test 47: Round-trip storage — 1x5 causal full pipeline")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tokens = ["alpha\n", "beta\n", "gamma\n", "delta\n", "omega\n"]
+        inp = make_tensor([tokens], tmpdir)
+        inp.requires_grad_(True)
+        mask = torch.tril(torch.ones(1, 5, 5, dtype=torch.bool))
+
+        # Forward
+        sliced = slice_attention_forward(inp, mask)
+        sliced.requires_grad_(True)
+        merged = merge_forward(sliced, axis=-1)
+
+        # Verify intermediate — forward output must be fully consistent
+        run_test("input files = 5", count_data_files(inp) == 5)
+        run_test("merged files = 5", count_data_files(merged) == 5)
+        check_coeff_storage_consistency(merged, "merged_output")
+
+        # Backward
+        modified_data = []
+        for i in range(5):
+            content = read_storage(merged, i) or ""
+            content = content.replace("alpha", "Alpha").replace("beta", "Beta")
+            content = content.replace("gamma", "Gamma").replace("delta", "Delta")
+            content = content.replace("omega", "Omega")
+            modified_data.append(content)
+        modified = make_tensor([modified_data], tmpdir)
+        grad_out = get_diff_tensor(merged, modified)
+        grad_sliced = merge_backward(grad_out, sliced, merged, axis=-1)
+        grad_input = slice_attention_backward(
+            grad_sliced, inp, sliced, mask,
+            task_prompt="Capitalize the first letter of each Greek letter name.",
+        )
+
+        run_test("grad_input shape [1, 5]", list(grad_input.shape) == [1, 5])
+        gi_file_count = count_data_files(grad_input)
+        run_test("grad_input files = 5", gi_file_count == 5)
+        check_coeff_storage_consistency(grad_input, "grad_input")
+
+    # ================================================================
     # Summary
     # ================================================================
     total = passed + failed

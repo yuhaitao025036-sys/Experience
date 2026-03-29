@@ -37,3 +37,18 @@ Import[experience/symbolic_tensor/function/get_causal_attention_mask.viba]
 #   - coefficient channel: grad_input numeric values are non-zero for attended
 #   - full pipeline: forward -> manual modify output -> backward -> check grad
 #   - content-aware grad: grad_input references original content in diffs
+#
+# 13 multi-batch storage consistency tests (no extra files, coeff-storage aligned):
+#   - 1x1 minimal: single element, exact file counts
+#   - 1x7 causal: single batch, 7 tokens, coefficients match frame counts
+#   - 3x5 mixed masks: causal/full/empty per batch, zero-attention batch has 0 files
+#   - 2x10 asymmetric padding: 8 real + 2 pad vs 2 real + 8 pad
+#   - 4x3 diagonal: all self-only, all coefficients = 1.0
+#   - 2x6 sliding vs full: window=2 vs full attention, different coeff patterns
+#   - 3x8 multi-digit flat indices: flat indices >9 (e.g. 23 → storage/2/3/data)
+#   - 5x2 sparse batches: only even batches attended, odd all zero
+#   - 1x12 partial padding: 9 real + 3 pad, large single batch
+#   - 2x4 return_view=True: symlink-based output, correct file and coeff counts
+#   - backward 2x3 causal: grad_input file count and consistency after LLM backward
+#   - backward 3x2 varied masks: full/diagonal/causal per batch, all get symbolic grad
+#   - round-trip 1x5 causal: full forward→backward pipeline, input/output/grad all verified
