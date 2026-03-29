@@ -1,8 +1,0 @@
-AttentionSlicer[torch.nn.Module] := 
-    # forward
-    ...
-    <- ...
-    # __init__
-    <- ()
-    # inline
-    <- Import[experience/symbolic_tensor/function/slice_attention.viba]
