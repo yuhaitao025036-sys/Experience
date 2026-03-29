@@ -1,5 +1,5 @@
-OutputPromptCallable := Import[experience/symbolic_tensor/function/st_matmul.viba].OutputPromptCallable
-RetrievalMethodCallable := Import[experience/symbolic_tensor/function/st_matmul.viba].RetrievalMethodCallable
+OutputPromptCallable := Import[experience/symbolic_tensor/function/st_moe.viba].OutputPromptCallable
+RetrievalMethodCallable := Import[experience/symbolic_tensor/function/st_moe.viba].RetrievalMethodCallable
 
 auto_train :=
     ($losses list[float], dict[$log_type str, $log_content str])

@@ -222,7 +222,7 @@ Key observations:
 │   └── 1/1/data             # Multi-digit index 11
 ```
 
-### Forward Pass (`st_matmul_forward`)
+### Forward Pass (`st_moe_forward`)
 
 1. **Query Generation**: LLM extracts semantic keywords from each input element
 2. **Experience Retrieval**: Jaccard similarity selects top-k relevant experience entries
@@ -230,7 +230,7 @@ Key observations:
 4. **Task Dispatch**: `TaskHandler` dispatches `AgentTask` objects to the LLM backend
 5. **Copy-back**: Results propagate through symlinks to parent storage
 
-### Backward Pass (`st_matmul_backward`)
+### Backward Pass (`st_moe_backward`)
 
 Computes gradients for both **input** and **experience** through numeric + symbolic channels.
 

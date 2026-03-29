@@ -128,7 +128,7 @@ def default_prompt_for_output(
     )
 
 
-def st_matmul_forward(
+def st_moe_forward(
     input: torch.Tensor,
     experience: torch.Tensor,
     output_prompt: Optional[Callable[..., str]] = None,
@@ -148,7 +148,7 @@ def st_matmul_forward(
       2. Select top-k experience entries by Jaccard similarity
       3. Slice experience to get relevant q/k/v mappings
       4. Dump views of experience, input element, and TODO output element
-      5. Build a StMatmulRequest
+      5. Build a StMoeRequest
 
     Then dispatch all requests to GenerateOutput[method] for batch LLM processing,
     and copy results back to tensor storage.
@@ -262,7 +262,7 @@ if __name__ == "__main__":
             os.environ[key] = val
     os.environ.pop("CLAUDECODE", None)
 
-    print("Running st_matmul_forward test...\n")
+    print("Running st_moe_forward test...\n")
 
     def run_test(name: str, condition: bool, expected=None, actual=None):
         if condition:
@@ -286,7 +286,7 @@ if __name__ == "__main__":
         experience_tensor = make_tensor(experience_data, tmpdir)
         print(f"  Experience shape: {list(experience_tensor.shape)}")
 
-        output, selected_indexes = st_matmul_forward(
+        output, selected_indexes = st_moe_forward(
             input_tensor, experience_tensor,
             output_prompt=None,
             topk=2,
@@ -321,7 +321,7 @@ if __name__ == "__main__":
         experience_tensor = make_tensor(experience_data, tmpdir)
         print(f"  Experience shape: {list(experience_tensor.shape)}")
 
-        output, selected_indexes = st_matmul_forward(
+        output, selected_indexes = st_moe_forward(
             input_tensor, experience_tensor,
             output_prompt=None,
             topk=2,

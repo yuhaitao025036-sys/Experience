@@ -5,13 +5,13 @@ import torch
 import torch.nn as nn
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from experience.symbolic_tensor.function.st_matmul import st_matmul
+from experience.symbolic_tensor.function.st_moe import st_moe
 from experience.symbolic_tensor.tensor_util.make_none_tensor import make_none_tensor
 
 
-class StMatmulModule(nn.Module):
+class StMoeModule(nn.Module):
     """
-    torch.nn.Module wrapping st_matmul.
+    torch.nn.Module wrapping st_moe.
 
     Experience is created inside __init__ like nn.Linear creates its weight.
     Initialized as a zero-coefficient symbolic tensor; load or assign content
@@ -64,7 +64,7 @@ class StMatmulModule(nn.Module):
         yield self.experience
 
     def forward(self, input: torch.Tensor) -> Tuple[torch.Tensor, Any]:
-        return st_matmul(
+        return st_moe(
             input, self.experience,
             self.output_prompt, self.query_prompt, self.grad_input_prompt,
             self.grad_exp_key_prompt, self.grad_exp_value_prompt,
@@ -88,7 +88,7 @@ if __name__ == "__main__":
             os.environ[key] = val
     os.environ.pop("CLAUDECODE", None)
 
-    print("Running StMatmulModule tests...\n")
+    print("Running StMoeModule tests...\n")
 
     def run_test(name: str, condition: bool, expected=None, actual=None):
         if condition:
@@ -113,7 +113,7 @@ if __name__ == "__main__":
 
     # Test 1: Construction
     print("Test 1: Construction")
-    model = StMatmulModule(
+    model = StMoeModule(
         experience_shape=[2, 3],
         topk=2,
     )
@@ -136,7 +136,7 @@ if __name__ == "__main__":
         ]
         src = make_tensor(experience_data, tmpdir)
 
-        model = StMatmulModule(
+        model = StMoeModule(
             experience_shape=[2, 3],
             topk=2,
         )
@@ -157,7 +157,7 @@ if __name__ == "__main__":
         ]
         src = make_tensor(experience_data, tmpdir)
 
-        model = StMatmulModule(
+        model = StMoeModule(
             experience_shape=[2, 3],
             topk=2,
         )
@@ -180,7 +180,7 @@ if __name__ == "__main__":
     print("Test 4: Compatible with optimizer")
     from experience.symbolic_tensor.optimizer.st_sgd import StSGD
 
-    model = StMatmulModule(
+    model = StMoeModule(
         experience_shape=[2, 3],
         topk=1,
     )
