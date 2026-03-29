@@ -5,6 +5,10 @@ dense_to_sparse :=
     <- $input Symbolic[torch.Tensor]
     <- $view bool # default False
     # inline
-    <- nonzero
-    <- $slice_view Import[experience/symbolic_tensor/tensor_util/slice_view.viba]
-    <- $slice_tensor Import[experience/symbolic_tensor/tensor_util/slice_tensor.viba]
+    <- ($indexes <- torch.nonzero <- $input.data <- as_tuple)
+    <- ($shape <- list <- $input.shape)
+    <- ($flat_indices <- zip_dot_product <- $indexes <- $input.stride)
+    <- ($output <- Import[experience/symbolic_tensor/tensor_util/make_tensor.viba]
+        <- list[storage_path[$input, $flat_indices]]
+        <- $input.st_relative_to
+        <- $symlink $view)

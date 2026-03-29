@@ -4,6 +4,7 @@ import torch
 from typing import List
 
 from experience.symbolic_tensor.tensor_util.make_tensor import make_tensor
+from experience.symbolic_tensor.tensor_util.dense_to_sparse import dense_to_sparse
 
 
 def _make_empty_dense(shape: List[int], relative_to: str) -> torch.Tensor:
@@ -29,7 +30,7 @@ def _make_empty_dense(shape: List[int], relative_to: str) -> torch.Tensor:
         nested_data = _reshape(nested, shape)
 
     t = make_tensor(nested_data, relative_to)
-    t.data.zero_()  # mark all as empty
+    t.data.zero_()
     return t
 
 
@@ -46,6 +47,97 @@ def _get_storage_path(tensor: torch.Tensor, flat_index: int) -> str:
     return os.path.realpath(path)
 
 
+def _sparse_to_dense_impl(
+    input: torch.Tensor,
+    indexes: List[torch.Tensor],
+    shape: List[int],
+) -> torch.Tensor:
+    """Core implementation: reconstruct dense from sparse."""
+    output = _make_empty_dense(shape, input.st_relative_to)
+
+    if indexes[0].numel() == 0:
+        return output
+
+    stride = output.stride()
+    dense_flat = sum(idx * s for idx, s in zip(indexes, stride))
+
+    for i in range(input.numel()):
+        src_path = _get_storage_path(input, i)
+        dst_path = _get_storage_path(output, int(dense_flat[i]))
+        shutil.copy2(src_path, dst_path)
+
+    output.data[tuple(indexes)] = input.data
+
+    return output
+
+
+class SparseToDense(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, *index_tensors_and_shape):
+        # Last element is shape (as a tuple, since autograd needs tensors/None)
+        # We encode shape as a tensor for autograd compatibility
+        shape_tensor = index_tensors_and_shape[-1]
+        indexes = list(index_tensors_and_shape[:-1])
+        shape = shape_tensor.tolist()
+
+        output = _sparse_to_dense_impl(input, indexes, shape)
+
+        # Save for backward
+        ctx.save_for_backward(input, *indexes, shape_tensor)
+        ctx.st_attrs = {}
+        for name, tensor in [("input", input), ("output", output)]:
+            attrs = {}
+            for attr in ("st_relative_to", "st_tensor_uid"):
+                if hasattr(tensor, attr):
+                    attrs[attr] = getattr(tensor, attr)
+            ctx.st_attrs[name] = attrs
+
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        saved = ctx.saved_tensors
+        input_tensor = saved[0]
+        shape_tensor = saved[-1]
+        indexes = list(saved[1:-1])
+
+        # Restore st_* attrs on input
+        for attr, val in ctx.st_attrs["input"].items():
+            setattr(input_tensor, attr, val)
+
+        # Backward of sparse_to_dense = dense_to_sparse on grad_output
+        # Extract grad values at the indexed positions
+        if hasattr(grad_output, "st_relative_to"):
+            grad_input, _, _ = dense_to_sparse(grad_output, view=False)
+            # But we only want grads at the specific indexed positions,
+            # not all nonzero. Use the saved indexes directly.
+            pass
+
+        # For the numeric channel: gather grad values at indexed positions
+        grad_input_data = grad_output.data[tuple(indexes)]
+
+        # For the symbolic channel: extract files at indexed positions
+        if hasattr(grad_output, "st_relative_to"):
+            from experience.symbolic_tensor.tensor_util.dense_to_sparse import (
+                _get_storage_path as _sparse_get_path,
+            )
+            stride = grad_output.stride()
+            dense_flat = sum(idx * s for idx, s in zip(indexes, stride))
+            paths = [_sparse_get_path(grad_output, int(fi)) for fi in dense_flat]
+            from pathlib import Path
+            grad_sparse = make_tensor(
+                [Path(p) for p in paths],
+                input_tensor.st_relative_to,
+                symlink=False,
+            )
+            grad_sparse.data = grad_input_data
+        else:
+            grad_sparse = grad_input_data
+
+        # Return grads for (input, *indexes, shape_tensor) — None for indexes and shape
+        return (grad_sparse,) + (None,) * len(indexes) + (None,)
+
+
 def sparse_to_dense(
     input: torch.Tensor,
     indexes: List[torch.Tensor],
@@ -53,8 +145,9 @@ def sparse_to_dense(
 ) -> torch.Tensor:
     """Reconstruct a dense symbolic tensor from sparse representation.
 
-    Creates an empty dense tensor of the given shape, then copies
-    the sparse input's elements into the positions specified by indexes.
+    Wrapped as torch.autograd.Function for gradient flow.
+    Forward: place sparse elements into a dense tensor at indexed positions.
+    Backward: extract grad at indexed positions back to sparse form.
 
     Args:
         input: 1D sparse symbolic tensor containing the nonzero elements.
@@ -66,30 +159,12 @@ def sparse_to_dense(
         A dense symbolic tensor with the sparse elements placed at
         the given index positions. Other positions have empty content.
     """
-    output = _make_empty_dense(shape, input.st_relative_to)
-
-    if indexes[0].numel() == 0:
-        return output
-
-    # Compute flat indices for the dense tensor positions (zip-style)
-    stride = output.stride()
-    dense_flat = sum(idx * s for idx, s in zip(indexes, stride))
-
-    # Copy files from sparse input to dense output at indexed positions
-    for i in range(input.numel()):
-        src_path = _get_storage_path(input, i)
-        dst_path = _get_storage_path(output, int(dense_flat[i]))
-        shutil.copy2(src_path, dst_path)
-
-    # Update numeric channel
-    output.data[tuple(indexes)] = input.data
-
-    return output
+    shape_tensor = torch.tensor(shape, dtype=torch.long)
+    return SparseToDense.apply(input, *indexes, shape_tensor)
 
 
 if __name__ == "__main__":
     import tempfile
-    from experience.symbolic_tensor.tensor_util.make_tensor import make_tensor
     from experience.symbolic_tensor.tensor_util.dense_to_sparse import dense_to_sparse
 
     print("Running sparse_to_dense tests...\n")
@@ -137,8 +212,8 @@ if __name__ == "__main__":
         indexes = [torch.tensor([0, 1]), torch.tensor([1, 0])]
         dense = sparse_to_dense(sparse, indexes, [2, 2])
         run_test("shape is [2, 2]", list(dense.shape) == [2, 2])
-        run_test("dense[0,1] == 'x'", read_storage(dense, 1) == "x")  # flat: 0*2+1=1
-        run_test("dense[1,0] == 'y'", read_storage(dense, 2) == "y")  # flat: 1*2+0=2
+        run_test("dense[0,1] == 'x'", read_storage(dense, 1) == "x")
+        run_test("dense[1,0] == 'y'", read_storage(dense, 2) == "y")
         run_test("data[0,1] nonzero", dense.data[0, 1].item() != 0.0)
         run_test("data[1,0] nonzero", dense.data[1, 0].item() != 0.0)
         run_test("data[0,0] zero", dense.data[0, 0].item() == 0.0)
@@ -147,7 +222,7 @@ if __name__ == "__main__":
     # Test 3: Empty sparse
     print("Test 3: Empty sparse input")
     with tempfile.TemporaryDirectory() as tmpdir:
-        sparse = make_tensor(["dummy"], tmpdir)  # won't be used
+        sparse = make_tensor(["dummy"], tmpdir)
         indexes = [torch.tensor([], dtype=torch.long)]
         dense = sparse_to_dense(sparse, indexes, [3])
         run_test("shape is [3]", list(dense.shape) == [3])
@@ -157,7 +232,7 @@ if __name__ == "__main__":
     print("Test 4: Roundtrip 1D")
     with tempfile.TemporaryDirectory() as tmpdir:
         original = make_tensor(["alpha", "beta", "gamma"], tmpdir)
-        original.data[1] = 0.0  # zero out beta
+        original.data[1] = 0.0
 
         sparse, indexes, shape = dense_to_sparse(original)
         reconstructed = sparse_to_dense(sparse, indexes, shape)
@@ -209,5 +284,15 @@ if __name__ == "__main__":
         run_test("reconstructed[1] == 'n'", read_storage(reconstructed, 1) == "n")
         run_test("data[0] zero", reconstructed.data[0].item() == 0.0)
         run_test("data[1] nonzero", reconstructed.data[1].item() != 0.0)
+
+    # Test 8: requires_grad flows through
+    print("Test 8: Autograd integration")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        sparse = make_tensor(["a", "b"], tmpdir)
+        sparse.requires_grad_(True)
+        indexes = [torch.tensor([0, 2])]
+        dense = sparse_to_dense(sparse, indexes, [3])
+        run_test("output requires_grad", dense.requires_grad)
+        run_test("has grad_fn", dense.grad_fn is not None)
 
     print("\nAll tests completed.")
