@@ -8,12 +8,18 @@ The result is a model that can **learn to perform tasks it was never trained on*
 
 ```
 experience/
-├── symbolic_tensor/     # Core tensor primitives, autograd functions, module, optimizer
-├── llm_client/          # LLM backends: raw API (OpenAI-compatible) and coding agent (Claude SDK)
-├── sparse_util/         # Sparse coordinate operations
-├── fs_util/             # File system utilities (directory packing, path enumeration)
-├── test/                # Integration tests and benchmarks
-└── example/             # End-to-end training demo
+├── symbolic_tensor/
+│   ├── function/          # Autograd Functions: st_moe, st_attention, merge, fork, copy, loss, etc.
+│   ├── tensor_util/       # Symbolic tensor primitives: make, slice, assign, diff, patch, dense/sparse
+│   ├── module/            # nn.Module wrappers: StMoeModule, WithDenseView
+│   ├── optimizer/         # StSGD: dual-channel (numeric + symbolic patch) optimizer
+│   ├── data_loader/       # Batch data loading from files
+│   └── test/              # Integration tests
+├── llm_client/            # LLM backends: raw API (OpenAI-compatible) and coding agent (Claude SDK)
+├── sparse_util/           # Sparse coordinate operations (transpose, convert)
+├── fs_util/               # File system utilities (directory packing, path enumeration, text merger)
+├── test/                  # End-to-end tests and benchmarks
+└── example/               # Python-to-Viba translation training demo
 ```
 
 ## Dual-Channel Gradient System
@@ -48,6 +54,81 @@ An **ExperienceTensor** is a symbolic tensor of shape `[N, 3]` where each row is
 
 It acts as the learnable "weight" of the model — starts empty and is populated during training. The backward pass computes diffs against expected output, and the optimizer applies patches to experience entries via `patch`.
 
+## Autograd Functions
+
+### Core (`function/`)
+
+| Function | Purpose |
+|----------|---------|
+| **`StMoe`** (`st_moe`) | Mixture-of-Experts: query gen → retrieval → LLM translation → copy-back |
+| **`st_attention`** | Composes `slice_attention` + `merge` into a full attention operation |
+| **`slice_attention`** | Attention-style forward/backward with causal masks |
+| **`merge`** | Merges symbolic tensor elements along an axis using `TextMerger` |
+| **`ForkTensor`** | Replicates input into N identical views; backward merges all grads |
+| **`Copy`** | Independent copy with autograd support |
+| **`GetEditDistanceRatio`** | Loss function: Levenshtein edit distance ratio |
+| **`fork_tensor`** | `torch.autograd.Function` for tensor forking |
+| **`dense_to_sparse`** / **`sparse_to_dense`** | Sparse/dense symbolic tensor conversion pair |
+| **`with_dense_view`** | Temporarily provides a dense view of sparse tensors |
+
+### Sparse/Dense Conversions
+
+`dense_to_sparse` extracts nonzero elements (by `torch.nonzero`) into a 1D sparse tensor with coordinate indexes. `sparse_to_dense` reconstructs a dense tensor from sparse representation. They form a forward/backward pair as `torch.autograd.Function` — each one's backward calls the other.
+
+### StMoe Detail
+
+Forward pass:
+1. **Query Generation**: LLM extracts semantic keywords from each input element
+2. **Experience Retrieval**: Jaccard similarity (with Gaussian noise for exploration) selects top-k relevant experience entries. Cold-start: returns random indexes when all queries are empty.
+3. **Context Assembly**: Dump symlink views of experience and input
+4. **Task Dispatch**: `TaskHandler` dispatches `AgentTask` objects to the LLM backend
+5. **Copy-back**: Results propagate through symlinks to parent storage
+
+Backward pass computes gradients for both **input** and **experience** through numeric + symbolic channels:
+
+- **Grad Input**: Numeric pass-through. Symbolically, the LLM reads grad_output diffs alongside original input/output/experience and writes improved input files.
+- **Grad Experience**: Forward index list transposed to group by experience entry. Cold-start padding randomly samples empty entries so they still receive gradients. Backward runs twice — once for key, once for value — with domain-specific prompts.
+
+## Tensor Utilities (`tensor_util/`)
+
+| Utility | Purpose |
+|---------|---------|
+| `make_tensor` | Create symbolic tensor from nested lists of strings/Paths |
+| `make_none_tensor` | Create zero-filled tensor with st_relative_to and st_tensor_uid |
+| `none_tensor_like` | Create None-filled tensor matching input shape |
+| `empty_tensor_like` | Create ""-filled tensor matching input shape |
+| `todo_tensor_like` | Create TODO-filled tensor matching input shape |
+| `slice_view` | Create symbolic tensor view via symlinks (shared storage) |
+| `slice_tensor` | Create independent copy (not symlinked) |
+| `assign_tensor` | Assign content from one tensor to another (copy) |
+| `assign_view` | Assign via symlinks (view) |
+| `get_diff_tensor` | Element-wise `diff -u` between two symbolic tensors |
+| `patch_tensor` | Apply unified diffs via `patch` CLI (fuzz=3). Cold-start: extracts `+` lines when target empty. |
+| `dump_tensor` / `dump_view` | Serialize tensor content to directory |
+| `load_tensor` | Deserialize tensor from directory |
+| `pack_tensor` | Pack tensor into nested list of file contents |
+| `st_patched` | Check if a tensor has been patched |
+| `dense_to_sparse` / `sparse_to_dense` | Sparse/dense conversion implementations |
+| `register_tensor_ops` | Monkey-patches `torch.Tensor` with `st_pack`, `st_assign`, `st_assign_view`, `st_get_diff`, `st_patch`, `st_file_paths`, `st_fork` |
+
+## Optimizer (`StSGD`)
+
+Two-channel update per step:
+- **Numeric**: `param.data = (1 - lr) * param.data + lr * grad.data`
+- **Symbolic**: Applies unified diff patches from grad storage to param storage via `patch_tensor` (uses the `patch` CLI with fuzz=3). Only patches elements where `grad.data != 0` (key+value dims).
+- **Query auto-update**: After patching key+value, derives query content by running `get_query_tensor` on the updated kv, merging LLM-generated keywords, sorting and deduplicating.
+
+## Storage Layout
+
+```
+{relative_to}/{tensor_uid}/
+├── shape                    # JSON: [2, 3]
+├── storage/
+│   ├── 0/data               # Element at flat index 0
+│   ├── 1/data               # Element at flat index 1
+│   └── 1/1/data             # Multi-digit index 11
+```
+
 ## Demo: Python to Viba Translation
 
 This example trains a model from scratch to translate Python code into **Viba** — a novel domain-specific language invented for this project that does not exist in the training corpus of any existing LLM. The LLM must learn to generate syntactically and semantically correct code in a language it has never seen, purely from the experience entries built up during training.
@@ -76,19 +157,16 @@ Type expressions use four ADT combinators:
 | Exponent | `<-` | Function type | `int <- int` (unary), `str <- int <- float` (curried) |
 | Tag | `` ` `` | Type-level tag/annotation | `` `JSON`` |
 
-Pattern matching replaces control flow:
+Additional constructs:
 
-```viba
-Match[$x > 0 -> 'positive', $x == 0 -> 'zero', _ -> 'negative']
-```
-
-Generics and collection types:
-
-```viba
-list[$elem int]           # parametric list
-dict['first' = $a, 'second' = $b]   # dict literal
-(int <- int)              # function type as value
-```
+- **Match**: `Match[$x > 0 -> 'positive', $x == 0 -> 'zero', _ -> 'negative']`
+- **Generics**: `list[$elem int]`
+- **Dict literal**: `dict['first' = $a, 'second' = $b]`
+- **Function type value**: `(int <- int)`
+- **Literals**: `INT`, `FLOAT`, `BOOLEAN`, `STRING ("...")`, `SINGLE_STRING ('...')`, `TRIPLE_STRING ('''...''')`, `CODE_BLOCK ({...})`
+- **Special types**: `void` / `()` (unit), `never` (bottom), `...` (ellipsis)
+- **Tuple syntax**: `(A, B)` desugars to product type
+- **Import**: `Import[path/to/file.viba]` references another Viba definition
 
 ### 1. Dataset
 
@@ -209,41 +287,28 @@ Key observations:
 - Experience entries accumulate correct Python-to-Viba mappings during training — e.g., entry `[22,23]` stores `classify(x) -> classify := | 'positive' | ...`.
 - All 34 patches applied cleanly with 0% rejection rate across 5 iterations.
 
-## How It Works
+## Tests
 
-### Storage Layout
+```bash
+# Unit tests (tensor_util inline tests)
+python -m experience.symbolic_tensor.tensor_util.make_tensor
+python -m experience.symbolic_tensor.tensor_util.slice_view
+python -m experience.symbolic_tensor.tensor_util.patch_tensor
 
+# Integration tests
+python -m experience.test.test_gain_st_sgd
+python -m experience.test.test_attention_vs_traditional
+python -m experience.test.test_st_attention_followed_by_st_moe
+
+# Individual function tests
+python -m experience.symbolic_tensor.function.slice_attention_backward
+python -m experience.symbolic_tensor.function.st_copy
+python -m experience.symbolic_tensor.function.fork_tensor
+python -m experience.symbolic_tensor.function.get_edit_distance_ratio
+
+# Full training demo
+python -m experience.example.naive_symbolic_transform_model.train
 ```
-{relative_to}/{tensor_uid}/
-├── shape                    # JSON: [2, 3]
-├── storage/
-│   ├── 0/data               # Element at flat index 0
-│   ├── 1/data               # Element at flat index 1
-│   └── 1/1/data             # Multi-digit index 11
-```
-
-### Forward Pass (`st_moe_forward`)
-
-1. **Query Generation**: LLM extracts semantic keywords from each input element
-2. **Experience Retrieval**: Jaccard similarity selects top-k relevant experience entries
-3. **Context Assembly**: Dump symlink views of experience and input
-4. **Task Dispatch**: `TaskHandler` dispatches `AgentTask` objects to the LLM backend
-5. **Copy-back**: Results propagate through symlinks to parent storage
-
-### Backward Pass (`st_moe_backward`)
-
-Computes gradients for both **input** and **experience** through numeric + symbolic channels.
-
-**Grad Input** (per element): Numeric is a pass-through (`grad_input.data = grad_output.data`). Symbolically, the LLM reads grad_output diffs alongside original input/output/experience and writes improved input files — the diff becomes the symbolic gradient.
-
-**Grad Experience** (aggregated): The forward pass index list is transposed to group by experience entry (identifying which entries were used and by how many inputs). Cold-start padding randomly samples empty experience entries so they still receive gradients. The backward runs twice — once for key, once for value — with domain-specific prompts. The LLM merges multiple grad_output signals and writes improved experience files. Numerically, `grad_experience.data` scatter-adds `1.0` per usage count.
-
-### Optimizer (`StSGD`)
-
-Two-channel update per step:
-- **Numeric**: `param.data = (1 - lr) * param.data + lr * grad.data`
-- **Symbolic**: Applies unified diff patches from grad storage to param storage via `patch_tensor` (uses the `patch` CLI with fuzz=3). Only patches elements where `grad.data != 0` (key+value dims).
-- **Query auto-update**: After patching key+value, derives query content by running `get_query_tensor` on the updated kv, merging LLM-generated keywords, sorting and deduplicating.
 
 ## Key Design Decisions
 
@@ -252,6 +317,8 @@ Two-channel update per step:
 - **Two LLM backends**: `raw_llm_api` (default, lightweight) and `coding_agent` (tool access)
 - **Symlinks for views, copies for mutations**: Shared storage for context, independent copies for LLM writes
 - **Experience starts empty**: Learned entirely at runtime, not pre-seeded
+- **Cold-start support**: Random retrieval and direct `+`-line extraction handle empty experience
+- **Append-only experience**: Zeros out gradient for non-empty rows so optimizer skips them
 
 ## Dependencies
 
@@ -285,4 +352,12 @@ import os
 path = os.path.join(t.st_relative_to, t.st_tensor_uid, "storage", "0", "data")
 with open(path) as f:
     print(f.read())      # "hello world"
+
+# Tensor ops (registered on torch.Tensor)
+diff = t.st_get_diff(expected)     # unified diff
+t.st_patch(grad)                   # apply patch
+paths = t.st_file_paths()          # list all storage paths
+t.st_assign(new_value)             # copy assignment
+t.st_assign_view(new_value)        # symlink assignment
+forks = t.st_fork(num_outputs=3)   # fork into N views
 ```
