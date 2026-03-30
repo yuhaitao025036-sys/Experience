@@ -138,11 +138,7 @@ _force_todo_nested :=
     $result (str | NestedList[str])
     <- $size torch.Size
     # inline
-    <- ($result
-        <- {
-            if len(size) == 0: return "TODO"
-            else: return [_force_todo_nested(size[1:]) for _ in range(size[0])]
-        })
+    <- ($result (str | NestedList[str]) <- { return "TODO" if $size is scalar. return list of _force_todo_nested($size[1:]) repeated $size[0] times otherwise. })
 
 # Sum type: detect whether input element is plain text or merged frames
 # (from st_attention output via TextMerger.pack).
