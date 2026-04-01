@@ -42,3 +42,48 @@ def st_fork(tensor, num_outputs=2):
     return fork_tensor(tensor, num_outputs=num_outputs)
 
 torch.Tensor.st_fork = st_fork
+
+
+class _StSlicer:
+    """Helper that turns tensor.st_*_slicer[...] into slice_view / slice_tensor calls.
+
+    Converts standard Python indexing syntax into the slice_tensors list
+    expected by slice_view / slice_tensor.
+    """
+
+    def __init__(self, tensor, slice_fn):
+        self._tensor = tensor
+        self._slice_fn = slice_fn
+
+    def __getitem__(self, key):
+        if not isinstance(key, tuple):
+            key = (key,)
+        ndim = self._tensor.dim()
+        # Expand Ellipsis
+        slice_list = []
+        for k in key:
+            if k is Ellipsis:
+                n_expand = ndim - (len(key) - 1)
+                slice_list.extend([slice(None)] * n_expand)
+            else:
+                slice_list.append(k)
+        # Pad with slice(None) if fewer indices than dims
+        while len(slice_list) < ndim:
+            slice_list.append(slice(None))
+        return self._slice_fn(self._tensor, slice_list)
+
+
+@property
+def _st_view_slicer(self):
+    from experience.symbolic_tensor.tensor_util.slice_view import slice_view
+    return _StSlicer(self, slice_view)
+
+torch.Tensor.st_view_slicer = _st_view_slicer
+
+
+@property
+def _st_value_slicer(self):
+    from experience.symbolic_tensor.tensor_util.slice_tensor import slice_tensor
+    return _StSlicer(self, slice_tensor)
+
+torch.Tensor.st_value_slicer = _st_value_slicer
