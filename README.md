@@ -9,7 +9,7 @@ The result is a model that can **learn to perform tasks it was never trained on*
 ```
 experience/
 ├── symbolic_tensor/
-│   ├── function/          # Autograd Functions: st_moe, st_attention, merge, fork, copy, loss, etc.
+│   ├── function/          # Autograd Functions: st_moe, st_attention, st_stack, slice_*, merge, fork, copy, loss, etc.
 │   ├── tensor_util/       # Symbolic tensor primitives: make, slice, assign, diff, patch, dense/sparse
 │   ├── module/            # nn.Module wrappers: StMoeModule, WithDenseView
 │   ├── optimizer/         # StSGD: dual-channel (numeric + symbolic patch) optimizer
@@ -19,7 +19,9 @@ experience/
 ├── sparse_util/           # Sparse coordinate operations (transpose, convert)
 ├── fs_util/               # File system utilities (directory packing, path enumeration, text merger)
 ├── test/                  # End-to-end tests and benchmarks
-└── example/               # Python-to-Viba translation training demo
+└── example/               # Training demos
+    ├── naive_symbolic_transform_model/  # Python-to-Viba translation
+    └── auto-encoder/                    # Auto-encoder baseline stability tests
 ```
 
 ## Dual-Channel Gradient System
@@ -63,11 +65,13 @@ It acts as the learnable "weight" of the model — starts empty and is populated
 | **`StMoe`** (`st_moe`) | Mixture-of-Experts: query gen → retrieval → LLM translation → copy-back |
 | **`st_attention`** | Composes `slice_attention` + `merge` into a full attention operation |
 | **`slice_attention`** | Attention-style forward/backward with causal masks |
+| **`st_stack`** | Stack symbolic tensors along a new axis (like `torch.stack`) |
+| **`slice_view`** | Autograd-aware slice creating symlinked views (shared storage) |
+| **`slice_tensor`** | Autograd-aware slice creating independent copies |
 | **`merge`** | Merges symbolic tensor elements along an axis using `TextMerger` |
 | **`ForkTensor`** | Replicates input into N identical views; backward merges all grads |
 | **`Copy`** | Independent copy with autograd support |
 | **`GetEditDistanceRatio`** | Loss function: Levenshtein edit distance ratio |
-| **`fork_tensor`** | `torch.autograd.Function` for tensor forking |
 | **`dense_to_sparse`** / **`sparse_to_dense`** | Sparse/dense symbolic tensor conversion pair |
 | **`with_dense_view`** | Temporarily provides a dense view of sparse tensors |
 
@@ -89,6 +93,24 @@ Backward pass computes gradients for both **input** and **experience** through n
 - **Grad Input**: Numeric pass-through. Symbolically, the LLM reads grad_output diffs alongside original input/output/experience and writes improved input files.
 - **Grad Experience**: Forward index list transposed to group by experience entry. Cold-start padding randomly samples empty entries so they still receive gradients. Backward runs twice — once for key, once for value — with domain-specific prompts.
 
+### Slicing with Autograd
+
+Both `slice_view` and `slice_tensor` support autograd:
+
+- **`slice_view`**: Creates views via symlinks (shared storage). Backward scatters gradients back to original positions.
+- **`slice_tensor`**: Creates independent copies. Backward still tracks which input positions contributed to each output.
+
+Both support standard Python indexing syntax:
+```python
+# Via tensor attributes
+row = t.st_view_slicer[0, :]      # Symlinked view
+col = t.st_value_slicer[:, 1]     # Independent copy
+
+# Via function calls
+from experience.symbolic_tensor.function.slice_view import slice_view
+sub = slice_view(t, [0, slice(None)])
+```
+
 ## Tensor Utilities (`tensor_util/`)
 
 | Utility | Purpose |
@@ -109,7 +131,23 @@ Backward pass computes gradients for both **input** and **experience** through n
 | `pack_tensor` | Pack tensor into nested list of file contents |
 | `st_patched` | Check if a tensor has been patched |
 | `dense_to_sparse` / `sparse_to_dense` | Sparse/dense conversion implementations |
-| `register_tensor_ops` | Monkey-patches `torch.Tensor` with `st_pack`, `st_assign`, `st_assign_view`, `st_get_diff`, `st_patch`, `st_file_paths`, `st_fork` |
+| `register_tensor_ops` | Monkey-patches `torch.Tensor` with symbolic tensor methods |
+
+### Registered Tensor Methods
+
+`register_tensor_ops` adds the following methods to `torch.Tensor`:
+
+| Method | Purpose |
+|--------|---------|
+| `st_pack()` | Pack tensor into nested list of file contents |
+| `st_assign(rvalue)` | Copy assignment |
+| `st_assign_view(rvalue)` | Symlink assignment (view) |
+| `st_get_diff(rvalue)` | Compute unified diff |
+| `st_patch(rvalue)` | Apply patches |
+| `st_file_paths()` | List all storage paths |
+| `st_fork(n)` | Fork into N views |
+| `st_view_slicer[...]` | Pythonic slicing with symlink views |
+| `st_value_slicer[...]` | Pythonic slicing with independent copies |
 
 ## Optimizer (`StSGD`)
 
@@ -287,6 +325,16 @@ Key observations:
 - Experience entries accumulate correct Python-to-Viba mappings during training — e.g., entry `[22,23]` stores `classify(x) -> classify := | 'positive' | ...`.
 - All 34 patches applied cleanly with 0% rejection rate across 5 iterations.
 
+## Auto-Encoder Example
+
+The `example/auto-encoder/` directory contains a baseline stability test that runs the auto-encoder experiment multiple times to measure variance:
+
+```bash
+python -m example.auto-encoder.loop_run
+```
+
+This runs 10 experiments and reports mean, min, max, and standard deviation of the loss, useful for establishing baseline metrics and debugging reproducibility issues.
+
 ## Tests
 
 ```bash
@@ -305,6 +353,9 @@ python -m experience.symbolic_tensor.function.slice_attention_backward
 python -m experience.symbolic_tensor.function.st_copy
 python -m experience.symbolic_tensor.function.fork_tensor
 python -m experience.symbolic_tensor.function.get_edit_distance_ratio
+python -m experience.symbolic_tensor.function.st_stack
+python -m experience.symbolic_tensor.function.slice_view
+python -m experience.symbolic_tensor.function.slice_tensor
 
 # Full training demo
 python -m experience.example.naive_symbolic_transform_model.train
@@ -313,12 +364,13 @@ python -m experience.example.naive_symbolic_transform_model.train
 ## Key Design Decisions
 
 - **LLM as compute kernel**: Replaces matrix multiplication with semantic reasoning
-- **Patch-based optimizer**: `diff`/`patch` for efficient incremental experience updates
+- **Patch-based Optimizer**: `diff`/`patch` for efficient incremental experience updates
 - **Two LLM backends**: `raw_llm_api` (default, lightweight) and `coding_agent` (tool access)
 - **Symlinks for views, copies for mutations**: Shared storage for context, independent copies for LLM writes
 - **Experience starts empty**: Learned entirely at runtime, not pre-seeded
 - **Cold-start support**: Random retrieval and direct `+`-line extraction handle empty experience
 - **Append-only experience**: Zeros out gradient for non-empty rows so optimizer skips them
+- **Pythonic slicing**: `st_view_slicer` and `st_value_slicer` provide NumPy-like indexing syntax
 
 ## Dependencies
 
@@ -360,4 +412,12 @@ paths = t.st_file_paths()          # list all storage paths
 t.st_assign(new_value)             # copy assignment
 t.st_assign_view(new_value)        # symlink assignment
 forks = t.st_fork(num_outputs=3)   # fork into N views
+
+# Pythonic slicing
+row_view = t.st_view_slicer[0, :]    # symlinked view
+row_copy = t.st_value_slicer[0, :]   # independent copy
+
+# Stack tensors
+from experience.symbolic_tensor.function.st_stack import st_stack
+stacked = st_stack([t1, t2, t3], dim=0)
 ```
