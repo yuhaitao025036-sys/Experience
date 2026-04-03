@@ -6,12 +6,14 @@ Viba DSL specification:
   kMaskedHint := "<AUTOENCODER-CLOZE-MASK-PLACEHOLDER>"
 
   test_baseline :=
-    $baseline_loss list[float]
+    IterationList[$baseline_loss list[float]]
     <- $total_batch_size int # default 16
+    <- $num_iterations int # default 1
     <- $llm_method str # default "raw_llm_api"
     <- $workspace_dir (str | None) # None means temp directory
     <- $dataset_dir <- { ./codebase/ }
     <- Import[./parepare_dataset]
+    <- IterationList[int] <- range <- $num_iterations
     <- Import[./baseline_agent_model.viba].BaselineAgentModel <- $llm_method
     <- Import[function/get_edit_distance]
 """
@@ -45,31 +47,17 @@ def _read_storage(tensor, flat_index: int) -> str:
         return f.read()
 
 
-def test_baseline(
-    total_batch_size: int = 16,
-    llm_method: str = "raw_llm_api",
-    workspace_dir: Optional[str] = None,
+def _run_single_iteration(
+    iteration_idx: int,
+    total_batch_size: int,
+    dataset_dir: str,
+    tmpdir: str,
+    llm_method: str,
 ) -> List[float]:
-    """test_baseline from test_baseline.viba.
-
-    Args:
-        total_batch_size: default 16
-        llm_method: default "raw_llm_api"
-        workspace_dir: None means temp directory
-
-    Returns:
-        List of edit distance ratios per sample
-    """
-    # <- $dataset_dir <- { ./codebase/ }
-    dataset_dir = os.path.realpath(CODEBASE_DIR)
-    print(f"Dataset: {dataset_dir}")
-
-    # <- $workspace_dir (str | None) # None means temp directory
-    if workspace_dir is None:
-        tmpdir = tempfile.mkdtemp()
-    else:
-        tmpdir = workspace_dir
-        os.makedirs(tmpdir, exist_ok=True)
+    """Run a single iteration of the baseline test."""
+    print(f"\n{'='*50}")
+    print(f"Iteration {iteration_idx + 1}")
+    print(f"{'='*50}")
 
     # <- Import[./parepare_dataset]
     masked_path_tensor, masked_content_tensor, gt_tensor, file_info = parepare_dataset(
@@ -92,9 +80,7 @@ def test_baseline(
     print(f"\noutput tensor uid: {output.st_tensor_uid}")
     print(f"ground_truth tensor uid: {gt_tensor.st_tensor_uid}")
 
-    print(f"\n{'='*50}")
-    print(f"Results (edit_distance_ratio, lower=better):")
-    print(f"{'='*50}")
+    print(f"\nResults (edit_distance_ratio, lower=better):")
     baseline_loss = []
     for i in range(total_batch_size):
         actual = _read_storage(output, i)
@@ -106,8 +92,57 @@ def test_baseline(
         print(f"       actual: {actual[:80].replace(chr(10), '\\n')}")
 
     mean_loss = loss.float().mean().item()
-    print(f"\nMean loss: {mean_loss:.4f}")
+    print(f"\nIteration {iteration_idx + 1} mean loss: {mean_loss:.4f}")
     return baseline_loss
+
+
+def test_baseline(
+    total_batch_size: int = 16,
+    num_iterations: int = 1,
+    llm_method: str = "raw_llm_api",
+    workspace_dir: Optional[str] = None,
+) -> List[List[float]]:
+    """test_baseline from test_baseline.viba.
+
+    Args:
+        total_batch_size: default 16
+        num_iterations: default 1
+        llm_method: default "raw_llm_api"
+        workspace_dir: None means temp directory
+
+    Returns:
+        List of baseline_loss per iteration
+    """
+    # <- $dataset_dir <- { ./codebase/ }
+    dataset_dir = os.path.realpath(CODEBASE_DIR)
+    print(f"Dataset: {dataset_dir}")
+
+    # <- $workspace_dir (str | None) # None means temp directory
+    if workspace_dir is None:
+        tmpdir = tempfile.mkdtemp()
+    else:
+        tmpdir = workspace_dir
+        os.makedirs(tmpdir, exist_ok=True)
+
+    # <- IterationList[int] <- range <- $num_iterations
+    all_iteration_losses: List[List[float]] = []
+    for iteration_idx in range(num_iterations):
+        baseline_loss = _run_single_iteration(
+            iteration_idx, total_batch_size, dataset_dir, tmpdir, llm_method
+        )
+        all_iteration_losses.append(baseline_loss)
+
+    # Summary
+    if num_iterations > 1:
+        print(f"\n{'='*50}")
+        print(f"Summary ({num_iterations} iterations):")
+        print(f"{'='*50}")
+        mean_losses = [sum(l) / len(l) for l in all_iteration_losses]
+        print(f"Mean losses per iteration: {['%.4f' % m for m in mean_losses]}")
+        overall_mean = sum(mean_losses) / len(mean_losses)
+        print(f"Overall mean loss: {overall_mean:.4f}")
+
+    return all_iteration_losses
 
 
 if __name__ == "__main__":
@@ -125,4 +160,4 @@ if __name__ == "__main__":
     os.environ.pop("CLAUDECODE", None)
 
     # Run the test
-    test_baseline(total_batch_size=16, llm_method="raw_llm_api")
+    test_baseline(total_batch_size=16, num_iterations=1, llm_method="raw_llm_api")

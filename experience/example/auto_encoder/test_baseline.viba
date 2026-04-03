@@ -3,8 +3,9 @@
 kMaskedHint := "<AUTOENCODER-CLOZE-MASK-PLACEHOLDER>"
 
 test_baseline :=
-    $baseline_loss list[float]
+    IterationList[$baseline_loss list[float]]
     <- $total_batch_size int # default 16
+    <- $num_iterations int # default 1
     <- $llm_method str # default "raw_llm_api"
     <- $workspace_dir (str | None) # None means temp directory
     #inline
@@ -12,6 +13,7 @@ test_baseline :=
     <- { In most cases, operators on Symbolic[Tensor] should be symblic}
     <- (($file_path_tensor, $file_content_tensor, $ground_truth_content_tensor)
         <- Import[./parepare_dataset])
+    <- (IterationList[int] <- range <- $num_iterations)
     <- ($baseline_output SymblicTensor[($total_batch_size,)]
         <- Import[./baseline_agent_model.viba].BaselineAgentModel
         <- $llm_method)
