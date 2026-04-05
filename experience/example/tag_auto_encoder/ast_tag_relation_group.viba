@@ -25,7 +25,7 @@ RelationInGroup :=
 Symbol[ProgrammingLanguage] := WithConstraint[
     str | int | float | bool,
     $constraint {
-        no space/tab/newline characters contained. 
+        no space/tab/newline characters contained except string literal. 
         each $value is a bridge cross lines and files.
     }
 ]
@@ -88,6 +88,7 @@ BaseRelationTagEnum := WithConstraint[
     | "collection_element"
     # string / docstring
     | "docstring"
+    | "text_content"
     | "fstring_elem"
     | "expr_stmt"
     # control flow

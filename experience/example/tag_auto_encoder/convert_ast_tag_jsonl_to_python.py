@@ -17,7 +17,6 @@ import ast as ast_mod
 import json
 import os
 import sys
-import urllib.parse
 from typing import Any, Dict, List, Optional, Set, Tuple
 from collections import defaultdict
 
@@ -78,8 +77,28 @@ class _RelationIndex:
 # ---------------------------------------------------------------------------
 
 def _decode_symbol(s: str) -> str:
-    """Decode a percent-encoded symbol back to its original string."""
-    return urllib.parse.unquote(s)
+    """Identity — symbols are stored as raw text, no decoding needed."""
+    return s
+
+
+_OP_DISPLAY = {
+    "is_not": "is not",
+    "not_in": "not in",
+}
+
+
+def _decode_op(s: str) -> str:
+    """Decode an operator symbol to its Python display form."""
+    return _OP_DISPLAY.get(s, s)
+
+
+def _resolve_docstring(sym: str, idx: _RelationIndex) -> str:
+    """Resolve a docstring symbol ($docstring_N) to its text content."""
+    text = idx.get(sym, "text_content")
+    if text:
+        return _decode_symbol(text[0])
+    # Fallback: the symbol itself might be the encoded text (old format)
+    return _decode_symbol(sym)
 
 
 def _format_collection_symbol(sym: str, idx: _RelationIndex, _depth: int = 0) -> str:
@@ -144,7 +163,7 @@ def _split_collection(s: str) -> List[str]:
 
 _OP_PRECEDENCE = {
     "or": 4, "and": 5, "not": 6,
-    "in": 7, "not in": 7, "is": 7, "is not": 7,
+    "in": 7, "not_in": 7, "is": 7, "is_not": 7,
     "<": 7, "<=": 7, ">": 7, ">=": 7, "!=": 7, "==": 7,
     "|": 8, "^": 9, "&": 10,
     "<<": 11, ">>": 11,
@@ -161,17 +180,17 @@ def _sym_precedence(sym: str, idx: _RelationIndex) -> int:
     if sym.startswith("$binop_"):
         op = idx.get(sym, "bin_op")
         if op:
-            return _OP_PRECEDENCE.get(_decode_symbol(op[0]), 12)
+            return _OP_PRECEDENCE.get(op[0], 12)
     if sym.startswith("$boolop_"):
         op = idx.get(sym, "bool_op")
         if op:
-            return _OP_PRECEDENCE.get(_decode_symbol(op[0]), 4)
+            return _OP_PRECEDENCE.get(op[0], 4)
     if sym.startswith("$compare_"):
         return 7
     if sym.startswith("$unaryop_"):
         op = idx.get(sym, "unary_op")
         if op:
-            return _OP_PRECEDENCE.get(_decode_symbol(op[0]), 14)
+            return _OP_PRECEDENCE.get(op[0], 14)
     if sym.startswith("$ifexp_"):
         return 3
     if sym.startswith("$lambda_"):
@@ -267,7 +286,7 @@ def _expr(sym: str, idx: _RelationIndex, _depth: int = 0) -> str:
         left = idx.get(sym, "bin_op_left")
         right = idx.get(sym, "bin_op_right")
         if op and left and right:
-            o = _decode_symbol(op[0])
+            o = _decode_op(op[0])
             my_prec = _OP_PRECEDENCE.get(o, 12)
             l = _paren_if_needed(left[0], my_prec, idx, _depth)
             # Right side: same precedence needs parens for left-assoc operators
@@ -283,7 +302,7 @@ def _expr(sym: str, idx: _RelationIndex, _depth: int = 0) -> str:
         op = idx.get(sym, "unary_op")
         operand = idx.get(sym, "unary_op_operand")
         if op and operand:
-            o = _decode_symbol(op[0])
+            o = _decode_op(op[0])
             my_prec = _OP_PRECEDENCE.get(o, 14)
             v = _paren_if_needed(operand[0], my_prec, idx, _depth)
             if o == "not":
@@ -301,7 +320,7 @@ def _expr(sym: str, idx: _RelationIndex, _depth: int = 0) -> str:
             result = _paren_if_needed(left[0], my_prec, idx, _depth)
             for o, r in zip(ops, rights):
                 r_str = _paren_if_needed(r, my_prec, idx, _depth, right_assoc=True)
-                result = f"{result} {_decode_symbol(o)} {r_str}"
+                result = f"{result} {_decode_op(o)} {r_str}"
             return result
         return sym
 
@@ -310,7 +329,7 @@ def _expr(sym: str, idx: _RelationIndex, _depth: int = 0) -> str:
         op = idx.get(sym, "bool_op")
         operands = idx.get(sym, "bool_op_operand")
         if op and operands:
-            o = _decode_symbol(op[0])
+            o = _decode_op(op[0])
             my_prec = _OP_PRECEDENCE.get(o, 4)
             parts = [_paren_if_needed(p, my_prec, idx, _depth) for p in operands]
             return f" {o} ".join(parts)
@@ -331,9 +350,9 @@ def _expr(sym: str, idx: _RelationIndex, _depth: int = 0) -> str:
         body = idx.get(sym, "lambda_body")
         # Build default map
         lam_defaults: Dict[str, str] = {}
-        for group in idx.get_groups(sym, "param_default"):
-            if len(group) >= 2:
-                lam_defaults[group[0]] = group[1]
+        lam_def_members = idx.get(sym, "param_default")
+        for i in range(0, len(lam_def_members) - 1, 2):
+            lam_defaults[lam_def_members[i]] = lam_def_members[i + 1]
         param_parts = []
         for p in params:
             part = p
@@ -656,7 +675,7 @@ def _stmt(sym: str, idx: _RelationIndex, indent: str = "") -> str:
     if "docstring" in tags and "contains" not in tags and "param" not in tags:
         doc = idx.get(sym, "docstring")
         if doc:
-            text = _decode_symbol(doc[0])
+            text = _resolve_docstring(doc[0], idx)
             return f'{indent}"""{text}"""\n'
         return ""
 
@@ -796,15 +815,15 @@ def _reconstruct_funcdef(name: str, idx: _RelationIndex, indent: str = "",
     for dec_sym in decorator_syms:
         lines.append(f"{indent}@{_expr(dec_sym, idx)}\n")
 
-    # Build param annotation and default maps from grouped member_tags
+    # Build param annotation and default maps from member_tags pairs
     param_anns: Dict[str, str] = {}
-    for group in idx.get_groups(s, "param_annotation"):
-        if len(group) >= 2:
-            param_anns[group[0]] = group[1]
+    ann_members = idx.get(s, "param_annotation")
+    for i in range(0, len(ann_members) - 1, 2):
+        param_anns[ann_members[i]] = ann_members[i + 1]
     param_defaults: Dict[str, str] = {}
-    for group in idx.get_groups(s, "param_default"):
-        if len(group) >= 2:
-            param_defaults[group[0]] = group[1]
+    def_members = idx.get(s, "param_default")
+    for i in range(0, len(def_members) - 1, 2):
+        param_defaults[def_members[i]] = def_members[i + 1]
 
     # Parameters
     params = idx.get(s, "param")
@@ -865,7 +884,7 @@ def _reconstruct_funcdef(name: str, idx: _RelationIndex, indent: str = "",
     body_stmts = body[1:] if skip_first else body
 
     if docs:
-        doc_text = _decode_symbol(docs[0])
+        doc_text = _resolve_docstring(docs[0], idx)
         lines.append(f'{indent}    """{doc_text}"""\n')
 
     lines.append(_reconstruct_body(body_stmts, idx, indent + "    "))
@@ -923,7 +942,7 @@ def _reconstruct_classdef(name: str, idx: _RelationIndex, indent: str = "",
     body_stmts = body[1:] if skip_first else body
 
     if docs:
-        doc_text = _decode_symbol(docs[0])
+        doc_text = _resolve_docstring(docs[0], idx)
         lines.append(f'{indent}    """{doc_text}"""\n')
 
     lines.append(_reconstruct_body(body_stmts, idx, indent + "    "))

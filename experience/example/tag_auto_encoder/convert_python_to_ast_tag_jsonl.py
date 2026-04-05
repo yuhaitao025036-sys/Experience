@@ -163,20 +163,16 @@ def _get_op_symbol(node: Any) -> str:
             "BitOr": "|", "BitXor": "^", "BitAnd": "&", "MatMult": "@",
             "UAdd": "+", "USub": "-", "Not": "not", "Invert": "~",
             "Eq": "==", "NotEq": "!=", "Lt": "<", "LtE": "<=",
-            "Gt": ">", "GtE": ">=", "Is": "is", "IsNot": "is%20not",
-            "In": "in", "NotIn": "not%20in", "And": "and", "Or": "or"
+            "Gt": ">", "GtE": ">=", "Is": "is", "IsNot": "is_not",
+            "In": "in", "NotIn": "not_in", "And": "and", "Or": "or"
         }
         return op_map.get(t, t)
     return str(node)
 
 
 def _encode_symbol(s: str) -> str:
-    """Encode a string as a Symbol (no space/tab/newline per constraint)."""
-    return (s.replace("%", "%25")
-             .replace(" ", "%20")
-             .replace("\t", "%09")
-             .replace("\n", "%0A")
-             .replace("\r", "%0D"))
+    """Identity — raw text stored directly, no percent-encoding."""
+    return s
 
 
 # ---------------------------------------------------------------------------
@@ -324,8 +320,9 @@ def _extract(node: Any, rels: List[Dict], tmp_gen: _TempVarGen,
             val = body[0].get("value", {})
             if val.get("_type") == "Constant" and isinstance(val.get("value"), str):
                 doc_str = val["value"]
-                doc_sym = _encode_symbol(doc_str)
-                add_rel("docstring", me, [doc_sym])
+                doc_var = tmp_gen.gen("docstring")
+                add_rel("docstring", me, [doc_var])
+                add_rel("text_content", doc_var, [_encode_symbol(doc_str)])
 
         # Body statements
         for i, stmt in enumerate(body):
@@ -363,8 +360,9 @@ def _extract(node: Any, rels: List[Dict], tmp_gen: _TempVarGen,
             val = body[0].get("value", {})
             if val.get("_type") == "Constant" and isinstance(val.get("value"), str):
                 doc_str = val["value"]
-                doc_sym = _encode_symbol(doc_str)
-                add_rel("docstring", me, [doc_sym])
+                doc_var = tmp_gen.gen("docstring")
+                add_rel("docstring", me, [doc_var])
+                add_rel("text_content", doc_var, [_encode_symbol(doc_str)])
 
         for i, stmt in enumerate(body):
             stmt_sym = child_sym_and_extract(stmt)
@@ -427,9 +425,10 @@ def _extract(node: Any, rels: List[Dict], tmp_gen: _TempVarGen,
         value = node.get("value", {})
         vt = value.get("_type", "") if isinstance(value, dict) else ""
         if vt == "Constant" and isinstance(value.get("value"), str):
-            # docstring — mark as such so the graph stays connected
-            doc_sym = _encode_symbol(str(value["value"]))
-            add_rel("docstring", me, [doc_sym])
+            # docstring — use temp var as connecting symbol, store text separately
+            doc_var = tmp_gen.gen("docstring")
+            add_rel("docstring", me, [doc_var])
+            add_rel("text_content", doc_var, [_encode_symbol(str(value["value"]))])
         elif vt == "Yield":
             yv_sym = child_sym_and_extract(value.get("value")) if value.get("value") else "None"
             add_rel("yields", me, [yv_sym])
@@ -844,6 +843,7 @@ def convert_python_to_ast_tag_jsonl(source_or_dict: Any) -> str:
     """Convert Python source or AST dict to JSONL of AstTagRelationGroup records.
 
     Accepts either a source code string or a pre-parsed JSON AST dict.
+    Records are grouped by (relation_tag, owner_tag) to reduce JSONL length.
     """
     if isinstance(source_or_dict, str):
         tree = ast.parse(source_or_dict)
@@ -854,7 +854,22 @@ def convert_python_to_ast_tag_jsonl(source_or_dict: Any) -> str:
     rels: List[Dict] = []
     tmp_gen = _TempVarGen()
     _extract(ast_dict, rels, tmp_gen)
-    return "\n".join(json.dumps(r, ensure_ascii=False) for r in rels)
+
+    # Group by (relation_tag, owner_tag), merging member_tags in order
+    grouped: Dict[Tuple[str, str], Dict] = {}
+    for r in rels:
+        key = (r["relation_tag"], r["owner_tag"])
+        if key not in grouped:
+            grouped[key] = {
+                "line": r["line"],
+                "relation_tag": r["relation_tag"],
+                "owner_tag": r["owner_tag"],
+                "member_tags": list(r["member_tags"]),
+            }
+        else:
+            grouped[key]["member_tags"].extend(r["member_tags"])
+
+    return "\n".join(json.dumps(r, ensure_ascii=False) for r in grouped.values())
 
 
 if __name__ == "__main__":
