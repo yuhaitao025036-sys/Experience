@@ -875,7 +875,7 @@ def convert_python_to_ast_tag_jsonl(source_or_dict: Any) -> str:
 if __name__ == "__main__":
     CODEBASE_DIR = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
-        "..", "code_auto_encoder", "codebase",
+        "..", "example", "code_auto_encoder", "codebase",
     )
 
     py_files = []
