@@ -1,19 +1,11 @@
-AstTagRelationGroup[ProgrammingLanguage] := WithConstraint[
-    Object
-        * $line int
-        * $relation_tag RelationTagEnum[ProgrammingLanguage]
-        * $owner_tag Symbol[ProgrammingLanguage] 
-        * $member_tags list[Symbol[ProgrammingLanguage]],
-    $constraint { a AstTagRelationGroup instance is a packed list[AstTagRelation] }
-]
-
 AstTagRelation[ProgrammingLanguage] :=
     Object
     * $line int
     * $relation_in_group RelationInGroup
     * $relation_tag RelationTagEnum[ProgrammingLanguage]
-    * $lhs_tag Symbol[ProgrammingLanguage] 
-    * $rhs_tag Symbol[ProgrammingLanguage]
+    * $owner_tag Symbol[ProgrammingLanguage]
+    * $member_tag Symbol[ProgrammingLanguage]
+    * $member_order_value int
 
 RelationInGroup :=
     Oneof

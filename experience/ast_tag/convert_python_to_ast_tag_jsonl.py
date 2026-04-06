@@ -1,14 +1,14 @@
-"""Convert Python AST JSON to AstTagRelationGroup JSONL.
+"""Convert Python AST to AstTagRelation JSONL.
 
 Generated from convert_python_to_ast_tag_jsonl.viba.
 
 Viba DSL specification:
   convert_python_to_ast_tag_jsonl[ProgrammingLanguage] :=
-    JsonLines[$ast_tag_rel_group AstTagRelationGroup[ProgrammingLanguage]]
+    JsonLines[$ast_tag_rel AstTagRelation[ProgrammingLanguage]]
     <- $ast_obj ast[ProgrammingLanguage]
     # inline
-    <- Import[./ast_tag_relation_group.viba]
-    <- { Assert that the $ast_tag_rel_group meets the AstTagRelationGroup schema }
+    <- Import[./ast_tag_relation.viba]
+    <- { Assert that the $ast_tag_rel meets the AstTagRelation schema }
     <- {
         all Symbol[ProgrammingLanguage]
         instances are used to generally connect semantics across lines and
@@ -16,13 +16,16 @@ Viba DSL specification:
         into Symbol[ProgrammingLanguage] instances. the underlying trouble is how to express ast tree structure.
         the solution is create a tmp_var symbol as owner_tag to flatten the tree structure.
     }
+
+# at least 50 roundtrip tests
+# input source python files come from ../example/code_auto_encoder/codebase
 """
 
 import ast
 import json
 import os
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +181,7 @@ def _encode_symbol(s: str) -> str:
 # ---------------------------------------------------------------------------
 # Relation extraction - flatten AST tree into relations
 #
-# KEY: self_sym parameter ensures member_tags from parent == owner_tags here.
+# KEY: self_sym parameter ensures member_tag from parent == owner_tags here.
 # When a parent does:
 #     child_sym = _node_to_symbol(child, tmp_gen)
 #     add_rel("assigns", target, [child_sym])
@@ -187,33 +190,41 @@ def _encode_symbol(s: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _extract(node: Any, rels: List[Dict], tmp_gen: _TempVarGen,
-             self_sym: Optional[str] = None):
+             self_sym: Optional[str] = None,
+             order_counters: Optional[Dict] = None):
     """Extract AstTagRelation records from a JSON AST node.
 
     self_sym: if provided, this node should use self_sym as its owner_tag
               instead of generating a new temp var. This connects the graph.
+    order_counters: shared dict of (owner, tag) -> next order value.
     """
     if not isinstance(node, dict):
         return
+
+    if order_counters is None:
+        order_counters = {}
 
     t = node.get("_type", "")
     ln = node.get("_lineno", 0)
 
     def add_rel(tag: str, owner: str, members: List[str]):
-        relations = []
         for m in members:
-            relations.append({
+            key = (owner, tag)
+            order_val = order_counters.get(key, 0)
+            order_counters[key] = order_val + 1
+            rels.append({
                 "line": ln,
                 "relation_tag": tag,
                 "owner_tag": owner,
-                "member_tags": [m]
+                "member_tag": m,
+                "member_order_value": order_val,
             })
-        rels.extend(relations)
 
     def child_sym_and_extract(child_node: Any) -> str:
         """Generate symbol for child AND recursively extract its relations."""
         sym = _node_to_symbol(child_node, tmp_gen)
-        _extract(child_node, rels, tmp_gen, self_sym=sym)
+        _extract(child_node, rels, tmp_gen, self_sym=sym,
+                 order_counters=order_counters)
         return sym
 
     # For complex expression types, determine the owner symbol:
@@ -263,13 +274,11 @@ def _extract(node: Any, rels: List[Dict], tmp_gen: _TempVarGen,
             add_rel("param", me, [arg_name])
             if arg.get("annotation"):
                 ann_sym = child_sym_and_extract(arg["annotation"])
-                rels.append({"line": ln, "relation_tag": "param_annotation",
-                             "owner_tag": me, "member_tags": [arg_name, ann_sym]})
+                add_rel("param_annotation", me, [arg_name, ann_sym])
             di = i - defaults_offset
             if 0 <= di < len(defaults) and defaults[di] is not None:
                 def_sym = child_sym_and_extract(defaults[di])
-                rels.append({"line": ln, "relation_tag": "param_default",
-                             "owner_tag": me, "member_tags": [arg_name, def_sym]})
+                add_rel("param_default", me, [arg_name, def_sym])
 
         if args.get("vararg"):
             va = args["vararg"]
@@ -277,8 +286,7 @@ def _extract(node: Any, rels: List[Dict], tmp_gen: _TempVarGen,
             add_rel("star_param", me, [va_name])
             if va.get("annotation"):
                 ann_sym = child_sym_and_extract(va["annotation"])
-                rels.append({"line": ln, "relation_tag": "param_annotation",
-                             "owner_tag": me, "member_tags": [va_name, ann_sym]})
+                add_rel("param_annotation", me, [va_name, ann_sym])
 
         kw_defaults = args.get("kw_defaults", [])
         for i, arg in enumerate(args.get("kwonlyargs", [])):
@@ -286,12 +294,10 @@ def _extract(node: Any, rels: List[Dict], tmp_gen: _TempVarGen,
             add_rel("param", me, [arg_name])
             if arg.get("annotation"):
                 ann_sym = child_sym_and_extract(arg["annotation"])
-                rels.append({"line": ln, "relation_tag": "param_annotation",
-                             "owner_tag": me, "member_tags": [arg_name, ann_sym]})
+                add_rel("param_annotation", me, [arg_name, ann_sym])
             if i < len(kw_defaults) and kw_defaults[i] is not None:
                 def_sym = child_sym_and_extract(kw_defaults[i])
-                rels.append({"line": ln, "relation_tag": "param_default",
-                             "owner_tag": me, "member_tags": [arg_name, def_sym]})
+                add_rel("param_default", me, [arg_name, def_sym])
 
         if args.get("kwarg"):
             ka = args["kwarg"]
@@ -299,8 +305,7 @@ def _extract(node: Any, rels: List[Dict], tmp_gen: _TempVarGen,
             add_rel("double_star_param", me, [ka_name])
             if ka.get("annotation"):
                 ann_sym = child_sym_and_extract(ka["annotation"])
-                rels.append({"line": ln, "relation_tag": "param_annotation",
-                             "owner_tag": me, "member_tags": [ka_name, ann_sym]})
+                add_rel("param_annotation", me, [ka_name, ann_sym])
 
         # Return annotation
         if node.get("returns"):
@@ -646,8 +651,7 @@ def _extract(node: Any, rels: List[Dict], tmp_gen: _TempVarGen,
             di = i - defaults_offset
             if 0 <= di < len(defaults) and defaults[di] is not None:
                 def_sym = child_sym_and_extract(defaults[di])
-                rels.append({"line": ln, "relation_tag": "param_default",
-                             "owner_tag": me, "member_tags": [arg_name, def_sym]})
+                add_rel("param_default", me, [arg_name, def_sym])
         if args.get("vararg"):
             va = args["vararg"]
             add_rel("star_param", me, [va.get("arg", "")])
@@ -840,10 +844,10 @@ def _extract(node: Any, rels: List[Dict], tmp_gen: _TempVarGen,
 # ---------------------------------------------------------------------------
 
 def convert_python_to_ast_tag_jsonl(source_or_dict: Any) -> str:
-    """Convert Python source or AST dict to JSONL of AstTagRelationGroup records.
+    """Convert Python source or AST dict to JSONL of AstTagRelation records.
 
     Accepts either a source code string or a pre-parsed JSON AST dict.
-    Records are grouped by (relation_tag, owner_tag) to reduce JSONL length.
+    Each relation has a single member_tag with member_order_value for ordering.
     """
     if isinstance(source_or_dict, str):
         tree = ast.parse(source_or_dict)
@@ -855,21 +859,7 @@ def convert_python_to_ast_tag_jsonl(source_or_dict: Any) -> str:
     tmp_gen = _TempVarGen()
     _extract(ast_dict, rels, tmp_gen)
 
-    # Group by (relation_tag, owner_tag), merging member_tags in order
-    grouped: Dict[Tuple[str, str], Dict] = {}
-    for r in rels:
-        key = (r["relation_tag"], r["owner_tag"])
-        if key not in grouped:
-            grouped[key] = {
-                "line": r["line"],
-                "relation_tag": r["relation_tag"],
-                "owner_tag": r["owner_tag"],
-                "member_tags": list(r["member_tags"]),
-            }
-        else:
-            grouped[key]["member_tags"].extend(r["member_tags"])
-
-    return "\n".join(json.dumps(r, ensure_ascii=False) for r in grouped.values())
+    return "\n".join(json.dumps(r, ensure_ascii=False) for r in rels)
 
 
 if __name__ == "__main__":
@@ -897,7 +887,7 @@ if __name__ == "__main__":
 
     print(f"\n--- total: {len(py_files)} files, {total_relations} relations ---")
 
-    # Verify graph connectivity: member_tags that are temp vars should appear as owner_tags
+    # Verify graph connectivity: member_tag that are temp vars should appear as owner_tags
     print("\n=== Graph connectivity check ===")
     sample_path = py_files[0] if py_files else None
     if sample_path:
@@ -909,13 +899,12 @@ if __name__ == "__main__":
         for line in jsonl.strip().splitlines():
             r = json.loads(line)
             all_owners.add(r["owner_tag"])
-            for m in r["member_tags"]:
-                all_members.add(m)
+            all_members.add(r["member_tag"])
         tmp_members = {m for m in all_members if m.startswith("$")}
         tmp_owners = {o for o in all_owners if o.startswith("$")}
         disconnected = tmp_members - tmp_owners
         print(f"  {os.path.relpath(sample_path, CODEBASE_DIR)}:")
-        print(f"    tmp_var member_tags: {len(tmp_members)}")
+        print(f"    tmp_var member_tag: {len(tmp_members)}")
         print(f"    tmp_var owner_tags:  {len(tmp_owners)}")
         print(f"    disconnected (member but never owner): {len(disconnected)}")
         if disconnected:

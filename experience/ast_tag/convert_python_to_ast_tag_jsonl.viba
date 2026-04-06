@@ -1,9 +1,9 @@
 convert_python_to_ast_tag_jsonl[ProgrammingLanguage] :=
-    JsonLines[$ast_tag_rel_group AstTagRelationGroup[ProgrammingLanguage]]
+    JsonLines[$ast_tag_rel AstTagRelation[ProgrammingLanguage]]
     <- $ast_obj ast[ProgrammingLanguage]
     # inline
-    <- Import[./ast_tag_relation_group.viba]
-    <- { Assert that the $ast_tag_rel_group meets the AstTagRelationGroup schema }
+    <- Import[./ast_tag_relation.viba]
+    <- { Assert that the $ast_tag_rel meets the AstTagRelation schema }
     <- {
         all Symbol[ProgrammingLanguage]
         instances are used to generally connect semantics across lines and       
@@ -11,3 +11,6 @@ convert_python_to_ast_tag_jsonl[ProgrammingLanguage] :=
         into Symbol[ProgrammingLanguage] instances. the underlying trouble is how to express ast tree structure.
         the solution is create a tmp_var symbol as owner_tag to flatten the tree structure.
     }
+
+# at least 50 roundtrip tests
+# input source python files come from ../example/code_auto_encoder/codebase

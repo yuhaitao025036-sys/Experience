@@ -1,16 +1,14 @@
-"""Convert AstTagRelationGroup JSONL to Python source code.
+"""Convert AstTagRelation JSONL to Python source code.
 
 Generated from convert_ast_tag_jsonl_to_python.viba.
 
 Viba DSL specification:
   convert_ast_tag_jsonl_to_python[ProgrammingLanguage] :=
     $ast_obj ast[ProgrammingLanguage]
-    <- JsonLines[$ast_tag_rel_group AstTagRelationGroup[ProgrammingLanguage]]
+    <- JsonLines[$ast_tag_rel AstTagRelation[ProgrammingLanguage]]
     # inline
-    <- Import[./ast_tag_relation_group.viba]
-    <- { Assert that the $ast_tag_rel_group meets the AstTagRelationGroup schema }
-
-# at least 50 roundtrip tests
+    <- Import[./ast_tag_relation.viba]
+    <- { Assert that the $ast_tag_rel meets the AstTagRelation schema }
 """
 
 import ast as ast_mod
@@ -26,40 +24,39 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 
 class _RelationIndex:
-    """Index AstTagRelationGroup records for fast lookup by owner_tag+relation_tag.
+    """Index AstTagRelation records for fast lookup by owner_tag+relation_tag.
 
-    Preserves insertion order so that the forward converter's emission order
-    (which mirrors AST walk order) can be recovered.
+    Each input record has a single member_tag + member_order_value.
+    Reconstructs ordered member lists by sorting on member_order_value.
     """
 
-    def __init__(self, groups: List[Dict]):
-        # owner_tag -> relation_tag -> [member_tags...]
-        self._data: Dict[str, Dict[str, List[str]]] = defaultdict(
+    def __init__(self, records: List[Dict]):
+        # Collect (member_tag, member_order_value) per (owner_tag, relation_tag)
+        raw: Dict[str, Dict[str, List[Tuple[int, str]]]] = defaultdict(
             lambda: defaultdict(list)
         )
         # Reverse: member_tag -> relation_tag -> [owner_tags...]
         self._reverse: Dict[str, Dict[str, List[str]]] = defaultdict(
             lambda: defaultdict(list)
         )
-        # Grouped: owner_tag -> relation_tag -> [[member_tags], ...]
-        self._grouped: Dict[str, Dict[str, List[List[str]]]] = defaultdict(
-            lambda: defaultdict(list)
-        )
-        for g in groups:
-            owner = g.get("owner_tag", "")
-            rel = g.get("relation_tag", "")
-            members = g.get("member_tags", [])
-            self._grouped[owner][rel].append(members)
-            for m in members:
-                self._data[owner][rel].append(m)
-                self._reverse[m][rel].append(owner)
+        for r in records:
+            owner = r.get("owner_tag", "")
+            rel = r.get("relation_tag", "")
+            member = r.get("member_tag", "")
+            order = r.get("member_order_value", 0)
+            raw[owner][rel].append((order, member))
+            self._reverse[member][rel].append(owner)
+
+        # Build sorted member lists
+        self._data: Dict[str, Dict[str, List[str]]] = {}
+        for owner, rels_dict in raw.items():
+            self._data[owner] = {}
+            for rel, pairs in rels_dict.items():
+                pairs.sort(key=lambda x: x[0])
+                self._data[owner][rel] = [m for _, m in pairs]
 
     def get(self, owner: str, rel_tag: str) -> List[str]:
         return self._data.get(owner, {}).get(rel_tag, [])
-
-    def get_groups(self, owner: str, rel_tag: str) -> List[List[str]]:
-        """Get grouped member_tags, preserving multi-member records."""
-        return self._grouped.get(owner, {}).get(rel_tag, [])
 
     def has(self, owner: str) -> bool:
         return owner in self._data
@@ -815,7 +812,7 @@ def _reconstruct_funcdef(name: str, idx: _RelationIndex, indent: str = "",
     for dec_sym in decorator_syms:
         lines.append(f"{indent}@{_expr(dec_sym, idx)}\n")
 
-    # Build param annotation and default maps from member_tags pairs
+    # Build param annotation and default maps from ordered member pairs
     param_anns: Dict[str, str] = {}
     ann_members = idx.get(s, "param_annotation")
     for i in range(0, len(ann_members) - 1, 2):
@@ -1070,9 +1067,9 @@ def _reconstruct_try(sym: str, idx: _RelationIndex, indent: str) -> str:
 # Public API
 # ---------------------------------------------------------------------------
 
-def convert_jsonl_to_python(groups: List[Dict]) -> str:
-    """Convert AstTagRelationGroup records to Python source code."""
-    idx = _RelationIndex(groups)
+def convert_jsonl_to_python(records: List[Dict]) -> str:
+    """Convert AstTagRelation records to Python source code."""
+    idx = _RelationIndex(records)
     top_level = idx.get("<module>", "contains")
 
     parts = []
