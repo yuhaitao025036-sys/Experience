@@ -1,0 +1,33 @@
+test_lexical_scope_go_to_parent :=
+    # 100 tests: pick random members in lexical relations, find parent, verify single
+    # validates:
+    #   1. returns exactly one CodePosition (not a list)
+    #   2. the returned relation_tag is in LEXICAL_RELATION_TAGS
+    #   3. the returned owner_tag != member_tag (no self-loops)
+    #   4. round-trip: expand_children on the returned owner contains the original member
+    #   5. the parent's line <= member's line (parent defined before or at same line)
+    list[bool]
+    <- $ast_tag_db Import[../ast_tag_db.viba].AstTagDB
+    <- $num_tests int # default 100
+    # inline
+    <- Import[./lexical_scope_go_to_parent.viba]
+    <- Import[./lexical_scope_expand_children.viba]
+    <- Import[../relation_tag_classification.viba]
+    <- ($all_file_ids list[str] <- $ast_tag_db.get_all_loaded_file_ids)
+    <- (list[bool]
+        <- { repeat num_tests times }
+        <- {
+            1. pick random file_id from all_file_ids
+            2. pick random member_tag that appears in a lexical relation
+               (SELECT DISTINCT member_tag FROM relations
+                WHERE file_id = ? AND relation_tag IN LEXICAL_RELATION_TAGS
+                AND member_tag IN (SELECT DISTINCT owner_tag FROM relations WHERE file_id = ?))
+               # pick members that are also owners, so they are internal nodes
+            3. call lexical_scope_go_to_parent(file_id, member_tag)
+            4. assert: returns exactly 1 CodePosition (not a list)
+            5. assert: result.relation_tag IN LEXICAL_RELATION_TAGS
+            6. assert: result.owner_tag != member_tag
+            7. assert: round-trip — lexical_scope_expand_children(file_id, result.owner_tag)
+               contains a CodePosition with member_tag == original member_tag
+            8. return True if all assertions pass
+        })

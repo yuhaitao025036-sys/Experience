@@ -1,0 +1,30 @@
+test_lexical_scope_expand_children :=
+    # 100 tests: pick random owners, expand children, verify all are lexical
+    # validates:
+    #   1. all returned relation_tags are in LEXICAL_RELATION_TAGS
+    #   2. each child's owner_tag == the queried owner_tag
+    #   3. children are ordered by member_order_value
+    #   4. round-trip: for each child, go_to_parent returns the original owner
+    list[bool]
+    <- $ast_tag_db Import[../ast_tag_db.viba].AstTagDB
+    <- $num_tests int # default 100
+    # inline
+    <- Import[./lexical_scope_expand_children.viba]
+    <- Import[./lexical_scope_go_to_parent.viba]
+    <- Import[../relation_tag_classification.viba]
+    <- ($all_file_ids list[str] <- $ast_tag_db.get_all_loaded_file_ids)
+    <- (list[bool]
+        <- { repeat num_tests times }
+        <- {
+            1. pick random file_id from all_file_ids
+            2. pick random owner_tag that has at least one lexical relation in this file
+               (SELECT DISTINCT owner_tag FROM relations
+                WHERE file_id = ? AND relation_tag IN LEXICAL_RELATION_TAGS)
+            3. call lexical_scope_expand_children(file_id, owner_tag)
+            4. assert: every returned CodePosition has relation_tag IN LEXICAL_RELATION_TAGS
+            5. assert: results ordered by member_order_value within each relation_tag
+            6. assert: for each child member_tag,
+               lexical_scope_go_to_parent(file_id, child.member_tag)
+               returns a CodePosition with owner_tag == original owner_tag
+            7. return True if all assertions pass
+        })

@@ -1,0 +1,9 @@
+CodePosition :=
+    # a single row from the relations table, representing one edge in the AST graph
+    Object
+    * $file_id str
+    * $line int
+    * $owner_tag str
+    * $relation_tag str
+    * $member_tag str
+    * $member_order_value int

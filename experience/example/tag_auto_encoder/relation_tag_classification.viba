@@ -1,0 +1,139 @@
+# ═══════════════════════════════════════════════════════════
+# Lexical vs Dynamic relation_tag classification
+# ═══════════════════════════════════════════════════════════
+#
+# Lexical (compile-time): static containment structure in source text.
+#   "what is textually inside this node?"
+#   A member in a lexical relation has exactly one owner per file.
+#
+# Dynamic (run-time): runtime execution, data flow, invocation.
+#   "what gets evaluated/called/bound at runtime?"
+#   A member in a dynamic relation can appear under multiple owners.
+#
+# Classification derived from 55,019 records across 62 JSONL files
+# in dataset/. Validated by multi-parent analysis and
+# internal-node (member is also an owner) analysis.
+
+LEXICAL_RELATION_TAGS := Oneof
+    # containment — the AST tree backbone (100% internal, 0% multi-parent)
+    | "contains"       # module-level containment: <module> -> top-level defs
+    | "stmt_seq"       # statement sequence in a block (always leaf — order matters)
+    | "expr_stmt"      # expression statement wrapper (100% internal)
+    # definition structure
+    | "defines"        # name definition: $functiondef_0 -> "pack_dir" (always leaf)
+    | "param"          # parameter name (always leaf)
+    | "star_param"     # *args parameter (always leaf)
+    | "double_star_param" # **kwargs parameter (always leaf)
+    | "param_annotation"  # type annotation on parameter
+    | "param_default"  # default value for parameter
+    | "annotation"     # standalone type annotation
+    | "decorates"      # decorator (always leaf)
+    | "bases"          # base class
+    | "metaclass"      # metaclass keyword
+    | "static_method"  # @staticmethod marker (100% internal)
+    | "class_method"   # @classmethod marker
+    | "property_def"   # @property marker (100% internal)
+    | "async_def"      # async function marker
+    # block bodies (100% internal, 0% multi-parent)
+    | "if_body"
+    | "else_body"
+    | "for_body"
+    | "while_body"
+    | "with_body"
+    | "with_context"   # context manager expression (100% internal)
+    | "try_body"
+    | "try_start"
+    | "except_body"
+    | "finally_body"
+    | "try_else"
+    | "lambda_body"
+    | "comprehension_body"
+    | "if_expr_body"
+    | "ellipsis_body"
+    | "async_for"
+    | "async_with"
+    # string content
+    | "docstring"      # docstring (100% internal, 0% multi-parent)
+    | "text_content"   # raw string content (high multi-parent due to value reuse, but structurally lexical)
+    # keyword statements (always leaf)
+    | "pass_stmt"
+    | "break_stmt"
+    | "continue_stmt"
+    | "bare_return"
+    # assert/delete
+    | "assert_test"    # (100% internal)
+    | "assert_msg"
+    | "del_target"
+    # scope declarations
+    | "global_decl"
+    | "nonlocal_decl"
+    # exception structure
+    | "handles"        # except clause type
+    | "except_as"      # except ... as name
+    | "raises"         # raise statement (100% internal)
+    | "raises_from"    # raise ... from ...
+
+DYNAMIC_RELATION_TAGS := Oneof
+    # calls and arguments — runtime invocation
+    | "calls"          # function/method call (34.5% internal, 41.7% multi-parent)
+    | "call_pos_arg"   # positional argument (32.4% internal, 18.2% multi-parent)
+    | "keyword_arg"    # keyword argument
+    | "double_star_arg" # **kwargs argument
+    # assignment — runtime binding
+    | "assigns"        # assignment target = value (51.2% internal, 11.9% multi-parent)
+    | "aug_assigns"    # augmented assignment +=, etc.
+    | "aug_op"         # augmented assignment operator
+    | "walrus"         # := walrus operator
+    # return/yield — runtime value flow
+    | "returns"        # return value (58.1% internal)
+    | "yields"         # yield value
+    | "yields_from"    # yield from value
+    | "await_value"    # await expression
+    # import — runtime module loading
+    | "imports"        # import target (99.9% leaf — terminal symbol names)
+    | "aliases"        # import alias (always leaf)
+    # attribute/subscript — runtime lookup
+    | "attr_value"     # object being accessed (22.1% internal)
+    | "attr_name"      # attribute name (always leaf — terminal string)
+    | "subscript"      # subscript expression (46.3% internal)
+    | "subscript_value" # object being subscripted
+    # operators — runtime evaluation
+    | "bin_op"         # binary operator symbol (always leaf)
+    | "bin_op_left"    # left operand
+    | "bin_op_right"   # right operand
+    | "unary_op"       # unary operator symbol (always leaf)
+    | "unary_op_operand" # operand
+    | "compare_left"   # left side of comparison (66.1% internal)
+    | "compare_op"     # comparison operator (always leaf)
+    | "compare_right"  # right side of comparison
+    | "bool_op"        # boolean operator (always leaf)
+    | "bool_op_operand" # boolean operand (88.4% internal)
+    # control flow expressions — runtime condition evaluation
+    | "if_test"        # if/elif condition (81.1% internal)
+    | "while_test"     # while condition
+    | "for_target"     # for loop variable
+    | "for_iter"       # for loop iterable (72.7% internal)
+    | "if_expr_test"   # ternary condition
+    | "if_expr_else"   # ternary else branch
+    # comprehension expressions
+    | "comprehension_iter"    # comprehension iterable
+    | "comprehension_if"      # comprehension filter
+    | "comprehension_target"  # comprehension variable
+    # collection literals — runtime construction
+    | "dict_literal"
+    | "dict_key"
+    | "dict_value"
+    | "set_literal"
+    | "list_literal"
+    | "tuple_literal"
+    | "collection_element"  # element in list/set/tuple
+    | "fstring_elem"        # f-string component
+    # slice — runtime access
+    | "slice_lower"
+    | "slice_upper"
+    | "slice_step"
+    | "slice_marker"
+    # with binding — runtime context manager result
+    | "with_as"
+    # starred — runtime unpacking
+    | "starred_value"

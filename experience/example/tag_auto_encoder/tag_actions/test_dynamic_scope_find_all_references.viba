@@ -1,0 +1,40 @@
+test_dynamic_scope_find_all_references :=
+    # 100 tests: pick defined symbols, find all references, verify completeness
+    # validates:
+    #   1. returns list[CodePosition]
+    #   2. all returned relation_tags are in DYNAMIC_RELATION_TAGS
+    #   3. all returned member_tags == symbol_name (the symbol being referenced)
+    #   4. reference count >= actual count from raw SQL
+    #      (SELECT COUNT(*) FROM relations
+    #       WHERE member_tag = ? AND relation_tag IN DYNAMIC_RELATION_TAGS)
+    #   5. round-trip: for each reference site, go_to_definition returns
+    #      the original definition site
+    list[bool]
+    <- $ast_tag_db Import[../ast_tag_db.viba].AstTagDB
+    <- $num_tests int # default 100
+    # inline
+    <- Import[./dynamic_scope_find_all_references.viba]
+    <- Import[./dynamic_scope_go_to_definition.viba]
+    <- Import[../relation_tag_classification.viba]
+    <- ($all_file_ids list[str] <- $ast_tag_db.get_all_loaded_file_ids)
+    <- ($defined_symbols list[(str, str, str)]
+        <- { SELECT file_id, owner_tag, member_tag FROM relations
+             WHERE relation_tag = 'defines' }
+        <- $ast_tag_db)
+    <- (list[bool]
+        <- { repeat num_tests times }
+        <- {
+            1. pick random (def_file_id, def_owner_tag, symbol_name) from defined_symbols
+            2. call dynamic_scope_find_all_references(def_file_id, def_line, symbol_name)
+            3. assert: returns list[CodePosition]
+            4. assert: every result has relation_tag IN DYNAMIC_RELATION_TAGS
+            5. assert: every result has member_tag == symbol_name
+            6. ground truth: SELECT * FROM relations
+               WHERE member_tag = symbol_name AND relation_tag IN DYNAMIC_RELATION_TAGS
+               count should match len(results)
+            7. assert: round-trip — for a sample of references,
+               dynamic_scope_go_to_definition(ref.file_id, ref.line, symbol_name)
+               returns at least one CodePosition with
+               file_id == def_file_id and owner_tag == def_owner_tag
+            8. return True if all assertions pass
+        })

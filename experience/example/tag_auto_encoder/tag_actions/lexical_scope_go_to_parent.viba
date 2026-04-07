@@ -1,0 +1,16 @@
+lexical_scope_go_to_parent :=
+    # Go to Parent: which scope lexically contains this node?
+    # every AST node has exactly one lexical parent — returns a single position
+    # e.g. lexical_scope_go_to_parent(db, "f.jsonl", "$call_3") ->
+    #   (f.jsonl, 5, $functiondef_0, "if_body", "$call_3", 0)
+    Import[./code_position.viba].CodePosition
+    <- $ast_tag_db Import[../ast_tag_db.viba].AstTagDB
+    <- $file_id str
+    <- $member_tag str
+    # inline
+    <- Import[../relation_tag_classification.viba].LEXICAL_RELATION_TAGS
+    <- { SELECT file_id, line, owner_tag, relation_tag, member_tag, member_order_value
+         FROM relations
+         WHERE file_id = ? AND member_tag = ?
+           AND relation_tag IN LEXICAL_RELATION_TAGS
+         LIMIT 1 }
