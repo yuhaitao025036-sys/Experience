@@ -1,0 +1,8 @@
+AstTagRecord :=
+    DatabaseRecord
+    * $file_id str
+    * $line int
+    * $relation_tag str
+    * $owner_tag str
+    * $member_tag str
+    * $member_order_value int
