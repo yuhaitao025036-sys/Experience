@@ -1,0 +1,17 @@
+build_symbol_count_cache :=
+    # precompute def_count and ref_count for every symbol across all files
+    # used to prune bad policies: high count = ambiguous symbol, don't query directly
+    # e.g. def_count["SimpleMerger"] = 1 (precise), def_count["forward"] = 13 (ambiguous)
+    # e.g. ref_count["run_test"] = 830 (noisy), ref_count["slice_attention_backward"] = 4 (useful)
+    ($def_count dict[str, int], $ref_count dict[str, int])
+    <- $ast_tag_db Import[../ast_tag_db.viba].AstTagDB
+    # inline
+    <- Import[../relation_tag_classification.viba].DYNAMIC_RELATION_TAGS
+    <- ($def_count dict[str, int]
+        <- { SELECT member_tag, COUNT(*) FROM relations
+             WHERE relation_tag = 'defines' GROUP BY member_tag }
+        <- $ast_tag_db)
+    <- ($ref_count dict[str, int]
+        <- { SELECT member_tag, COUNT(*) FROM relations
+             WHERE relation_tag IN DYNAMIC_RELATION_TAGS GROUP BY member_tag }
+        <- $ast_tag_db)

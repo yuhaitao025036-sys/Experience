@@ -1,0 +1,9 @@
+convert_ast_tag_jsonl_to_ast_json :=
+    ($json list[PythonJson], $inner_path_to_tmp_var_name dict[str, str])
+    <- list[AstTagRelation[Python]]
+    # inline
+    <- {
+        1. reconstruct ast in json format
+        2. all tmp_var started from '$' should be inlined, i.e. make nested ast tree
+        3. the name convention of inner_path is the same as jsondiff path
+    }

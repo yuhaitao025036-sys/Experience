@@ -1,0 +1,9 @@
+convert_ast_json_to_ast_tag_jsonl :=
+    list[AstTagRelation[Python]]
+    <- $json list[PythonJson]
+    <- $inner_path_to_tmp_var_name dict[str, str]
+    # inline
+    <- {
+        1. convert_ast_tag_jsonl_to_ast_json(convert_ast_json_to_ast_tag_jsonl(x)) == x
+        2. convert_ast_json_to_ast_tag_jsonl(convert_ast_tag_jsonl_to_ast_json(x)) == x
+    }

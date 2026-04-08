@@ -1,0 +1,8 @@
+get_def_count :=
+    # how many 'defines' relations exist for this symbol across all files
+    # e.g. get_def_count(cache, "SimpleMerger") -> 1, get_def_count(cache, "forward") -> 13
+    int
+    <- $def_count dict[str, int]
+    <- $symbol_name str
+    # inline
+    <- { def_count.get(symbol_name, 0) }

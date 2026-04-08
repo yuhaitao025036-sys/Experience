@@ -1,0 +1,8 @@
+get_ref_count :=
+    # how many dynamic references exist for this symbol across all files
+    # e.g. get_ref_count(cache, "run_test") -> 830, get_ref_count(cache, "slice_attention_backward") -> 4
+    int
+    <- $ref_count dict[str, int]
+    <- $symbol_name str
+    # inline
+    <- { ref_count.get(symbol_name, 0) }
