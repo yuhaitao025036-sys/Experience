@@ -17,3 +17,4 @@ convert_python_to_ast_tag_jsonl[ProgrammingLanguage] :=
 
 # at least 50 roundtrip tests
 # input source python files come from ../example/code_auto_encoder/codebase
+# assert convert_ast_tag_jsonl_to_python(convert_python_to_ast_tag_jsonl(x)) == x

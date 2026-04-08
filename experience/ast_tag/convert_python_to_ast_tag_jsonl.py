@@ -169,6 +169,10 @@ def convert_python_to_ast_tag_jsonl(source_or_dict: Any) -> str:
 
 
 if __name__ == "__main__":
+    from experience.ast_tag.convert_ast_tag_jsonl_to_python import (
+        convert_jsonl_to_python,
+    )
+
     CODEBASE_DIR = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         "..", "example", "code_auto_encoder", "codebase",
@@ -180,12 +184,51 @@ if __name__ == "__main__":
                 py_files.append(os.path.join(root, f))
     py_files.sort()
 
-    total = 0
+    # --- roundtrip tests ---
+    passed = 0
+    failed = 0
+    errors = []
+
     for path in py_files:
-        with open(path) as fh:
+        with open(path, "r", encoding="utf-8") as fh:
             source = fh.read()
+
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            continue
+
+        expected = ast.unparse(ast.parse(source))
+
         jsonl = convert_python_to_ast_tag_jsonl(source)
-        n = len(jsonl.strip().splitlines()) if jsonl.strip() else 0
-        total += n
-        print(f"{os.path.relpath(path, CODEBASE_DIR)}: {n} relations")
-    print(f"\n--- total: {len(py_files)} files, {total} relations ---")
+        records = [json.loads(line) for line in jsonl.strip().splitlines()]
+        reconstructed = convert_jsonl_to_python(records)
+
+        rel = os.path.relpath(path, CODEBASE_DIR)
+
+        if expected == reconstructed:
+            passed += 1
+            print(f"  PASS {rel}")
+        else:
+            failed += 1
+            errors.append(rel)
+            # show first difference for debugging
+            exp_lines = expected.splitlines()
+            rec_lines = reconstructed.splitlines()
+            for i, (e, r) in enumerate(zip(exp_lines, rec_lines)):
+                if e != r:
+                    print(f"  FAIL {rel} line {i+1}:")
+                    print(f"    expected:      {e[:120]}")
+                    print(f"    reconstructed: {r[:120]}")
+                    break
+            else:
+                if len(exp_lines) != len(rec_lines):
+                    print(f"  FAIL {rel}: line count {len(exp_lines)} vs {len(rec_lines)}")
+                else:
+                    print(f"  FAIL {rel}: unknown diff")
+
+    print(f"\n--- Roundtrip: {passed} passed, {failed} failed ---")
+    assert passed >= 50, f"need at least 50 roundtrip passes, got {passed}"
+    if errors:
+        print(f"Failed files: {errors}")
+    print(f"All roundtrip tests passed ({passed} files).")
