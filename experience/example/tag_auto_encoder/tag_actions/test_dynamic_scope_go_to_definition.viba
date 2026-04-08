@@ -2,7 +2,8 @@ test_dynamic_scope_go_to_definition :=
     # 100 tests: pick symbols used in dynamic relations, find their definitions
     # validates:
     #   1. returns list[CodePosition] (possibly empty for builtins/externals)
-    #   2. each definition has relation_tag == "defines" with member_tag == symbol_name
+    #   2. each definition has relation_tag IN ('FunctionDef.name', 'AsyncFunctionDef.name', 'ClassDef.name')
+    #      with member_tag == symbol_name
     #   3. definition sites are unique (no duplicates)
     #   4. round-trip: find_all_references on the defined symbol includes the original usage site
     list[bool]
@@ -15,7 +16,7 @@ test_dynamic_scope_go_to_definition :=
     <- ($all_file_ids list[str] <- $ast_tag_db.get_all_loaded_file_ids)
     <- ($defined_symbols list[(str, str)]
         <- { SELECT DISTINCT file_id, member_tag FROM relations
-             WHERE relation_tag = 'defines' }
+             WHERE relation_tag IN ('FunctionDef.name', 'AsyncFunctionDef.name', 'ClassDef.name') }
         <- $ast_tag_db)
     <- (list[bool]
         <- { repeat num_tests times }
@@ -24,14 +25,13 @@ test_dynamic_scope_go_to_definition :=
             2. find a usage site: SELECT file_id, owner_tag FROM relations
                WHERE member_tag = symbol_name
                AND relation_tag IN DYNAMIC_RELATION_TAGS
-               (pick one at random — the symbol might be used in same or different file)
-            3. call dynamic_scope_go_to_definition(usage_file_id, usage_line, symbol_name)
+               (pick one at random)
+            3. call dynamic_scope_go_to_definition(symbol_name)
             4. assert: returns list[CodePosition] with at least 1 result
             5. assert: at least one result has file_id == def_file_id
-               and relation_tag == 'defines' and member_tag == symbol_name
+               and relation_tag IN ('FunctionDef.name', ...) and member_tag == symbol_name
             6. assert: no duplicate (file_id, owner_tag) pairs in results
-            7. assert: round-trip — dynamic_scope_find_all_references(
-               def_file_id, def_line, symbol_name)
+            7. assert: round-trip — dynamic_scope_find_all_references(symbol_name)
                returns at least one reference in usage_file_id
             8. return True if all assertions pass
         })
