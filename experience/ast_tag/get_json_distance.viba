@@ -1,0 +1,18 @@
+get_json_distance :=
+    float
+    <- $lhs PythonJson
+    <- $rhs PythonJson
+    # inline
+    <- ($patch_json PythonJson <- {
+        import jsonpatch
+        jsonpatch.make_patch(lhs, rhs)
+    })
+    <- ($patch_num_leaves int <- {
+        sum of num_leaves in all ops like 'remove', 'add', 'replace'.
+    })
+    <- { patch_num_leaves / (num_leaves(lhs) + num_leaves(rhs)) }
+
+# test cases.
+# 1. all the same. assert get_json_distance(...) == 0.0
+# 2. all different. assert get_json_distance(...) == 1.0
+# 3. otherwise. assert get_json_distance(...) == expected
