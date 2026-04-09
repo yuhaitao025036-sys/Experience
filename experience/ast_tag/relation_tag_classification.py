@@ -4,133 +4,112 @@ Lexical vs Dynamic relation_tag classification.
 Lexical (compile-time): static containment structure in source text.
 Dynamic (run-time): runtime execution, data flow, invocation.
 
-Classification derived from 55,019 records across 62 JSONL files.
+relation_tag format: Type.field_name (aligned with Python ast module)
 """
 
 LEXICAL_RELATION_TAGS: frozenset[str] = frozenset({
-    # containment — the AST tree backbone
-    "contains",
-    "stmt_seq",
-    "expr_stmt",
+    # block bodies — the AST tree backbone
+    "Module.body",
+    "FunctionDef.body",
+    "AsyncFunctionDef.body",
+    "ClassDef.body",
+    "If.body", "If.orelse",
+    "For.body", "For.orelse",
+    "AsyncFor.body", "AsyncFor.orelse",
+    "While.body", "While.orelse",
+    "With.body", "AsyncWith.body",
+    "Try.body", "Try.orelse", "Try.finalbody",
+    "TryStar.body", "TryStar.orelse", "TryStar.finalbody",
+    "ExceptHandler.body",
+    "match_case.body",
     # definition structure
-    "defines",
-    "param",
-    "star_param",
-    "double_star_param",
-    "param_annotation",
-    "param_default",
-    "annotation",
-    "decorates",
-    "bases",
-    "metaclass",
-    "static_method",
-    "class_method",
-    "property_def",
-    "async_def",
-    # block bodies
-    "if_body",
-    "else_body",
-    "for_body",
-    "while_body",
-    "with_body",
-    "with_context",
-    "try_body",
-    "try_start",
-    "except_body",
-    "finally_body",
-    "try_else",
-    "lambda_body",
-    "comprehension_body",
-    "if_expr_body",
-    "ellipsis_body",
-    "async_for",
-    "async_with",
-    # string content
-    "docstring",
-    "text_content",
-    # keyword statements
-    "pass_stmt",
-    "break_stmt",
-    "continue_stmt",
-    "bare_return",
-    # assert/delete
-    "assert_test",
-    "assert_msg",
-    "del_target",
-    # scope declarations
-    "global_decl",
-    "nonlocal_decl",
+    "FunctionDef.name", "AsyncFunctionDef.name", "ClassDef.name",
+    "FunctionDef.decorator_list", "AsyncFunctionDef.decorator_list", "ClassDef.decorator_list",
+    "ClassDef.bases", "ClassDef.keywords",
+    "FunctionDef.returns", "AsyncFunctionDef.returns",
+    # parameters
+    "FunctionDef.args", "AsyncFunctionDef.args", "Lambda.args",
+    "arguments.posonlyargs", "arguments.args", "arguments.kwonlyargs",
+    "arguments.vararg", "arguments.kwarg",
+    "arguments.kw_defaults", "arguments.defaults",
+    "arg.arg", "arg.annotation",
+    "keyword.arg",
+    # import structure
+    "Import.names", "ImportFrom.names",
+    "ImportFrom.module", "ImportFrom.level",
+    "alias.name", "alias.asname",
+    "Global.names", "Nonlocal.names",
     # exception structure
-    "handles",
-    "except_as",
-    "raises",
-    "raises_from",
+    "Try.handlers", "TryStar.handlers",
+    "ExceptHandler.type", "ExceptHandler.name",
+    # with items
+    "With.items", "AsyncWith.items",
+    "withitem.context_expr", "withitem.optional_vars",
+    # comprehension structure
+    "ListComp.generators", "SetComp.generators",
+    "GeneratorExp.generators", "DictComp.generators",
+    "comprehension.ifs", "comprehension.is_async",
+    # match structure
+    "Match.cases",
+    "match_case.pattern", "match_case.guard",
+    "MatchSequence.patterns", "MatchMapping.keys", "MatchMapping.patterns",
+    "MatchMapping.rest", "MatchClass.cls", "MatchClass.patterns",
+    "MatchClass.kwd_attrs", "MatchClass.kwd_patterns",
+    "MatchStar.name", "MatchAs.pattern", "MatchAs.name",
+    "MatchOr.patterns",
+    # annotation
+    "AnnAssign.annotation", "AnnAssign.simple",
 })
 
 DYNAMIC_RELATION_TAGS: frozenset[str] = frozenset({
-    # calls and arguments — runtime invocation
-    "calls",
-    "call_pos_arg",
-    "keyword_arg",
-    "double_star_arg",
+    # call — runtime invocation
+    "Call.func", "Call.args", "Call.keywords",
+    "keyword.value",
     # assignment — runtime binding
-    "assigns",
-    "aug_assigns",
-    "aug_op",
-    "walrus",
-    # return/yield — runtime value flow
-    "returns",
-    "yields",
-    "yields_from",
-    "await_value",
-    # import — runtime module loading
-    "imports",
-    "aliases",
-    # attribute/subscript — runtime lookup
-    "attr_value",
-    "attr_name",
-    "subscript",
-    "subscript_value",
+    "Assign.targets", "Assign.value",
+    "AugAssign.target", "AugAssign.op", "AugAssign.value",
+    "AnnAssign.target", "AnnAssign.value",
+    "Delete.targets",
+    "NamedExpr.target", "NamedExpr.value",
+    # return/yield/await
+    "Return.value",
+    "Yield.value", "YieldFrom.value", "Await.value",
+    # expression wrapper
+    "Expr.value",
     # operators — runtime evaluation
-    "bin_op",
-    "bin_op_left",
-    "bin_op_right",
-    "unary_op",
-    "unary_op_operand",
-    "compare_left",
-    "compare_op",
-    "compare_right",
-    "bool_op",
-    "bool_op_operand",
-    # control flow expressions — runtime condition evaluation
-    "if_test",
-    "while_test",
-    "for_target",
-    "for_iter",
-    "if_expr_test",
-    "if_expr_else",
+    "BinOp.left", "BinOp.op", "BinOp.right",
+    "UnaryOp.op", "UnaryOp.operand",
+    "BoolOp.op", "BoolOp.values",
+    "Compare.left", "Compare.ops", "Compare.comparators",
+    # control flow expressions
+    "If.test", "While.test",
+    "For.target", "For.iter",
+    "AsyncFor.target", "AsyncFor.iter",
+    "IfExp.test", "IfExp.body", "IfExp.orelse",
     # comprehension expressions
-    "comprehension_iter",
-    "comprehension_if",
-    "comprehension_target",
-    # collection literals — runtime construction
-    "dict_literal",
-    "dict_key",
-    "dict_value",
-    "set_literal",
-    "list_literal",
-    "tuple_literal",
-    "collection_element",
-    "fstring_elem",
-    # slice — runtime access
-    "slice_lower",
-    "slice_upper",
-    "slice_step",
-    "slice_marker",
-    # with binding — runtime context manager result
-    "with_as",
-    # starred — runtime unpacking
-    "starred_value",
+    "ListComp.elt", "SetComp.elt", "GeneratorExp.elt",
+    "DictComp.key", "DictComp.value",
+    "comprehension.target", "comprehension.iter",
+    # attribute/subscript — runtime lookup
+    "Attribute.value", "Attribute.attr",
+    "Subscript.value", "Subscript.slice",
+    "Starred.value",
+    # collection literals
+    "Dict.keys", "Dict.values",
+    "Set.elts", "List.elts", "Tuple.elts",
+    # string
+    "JoinedStr.values",
+    "FormattedValue.value", "FormattedValue.conversion", "FormattedValue.format_spec",
+    # exception
+    "Raise.exc", "Raise.cause",
+    "Assert.test", "Assert.msg",
+    # lambda
+    "Lambda.body",
+    # slice
+    "Slice.lower", "Slice.upper", "Slice.step",
+    # match values
+    "Match.subject",
+    "MatchValue.value", "MatchSingleton.value",
 })
 
 

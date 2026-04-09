@@ -5,11 +5,6 @@ dynamic_scope_find_all_references :=
     list[$reference_site CodePosition]
     <- $ast_tag_db AstTagDB
     <- $symbol_name str
-    # inline
-    <- DYNAMIC_RELATION_TAGS
-    <- { step 1: direct member_tag match with DYNAMIC tags }
-    <- { step 2: re-export tracing }
-    <- { step 3: attribute references }
 """
 
 import sys
@@ -28,15 +23,11 @@ def dynamic_scope_find_all_references(
     """Find All References: who uses/calls/references this symbol?
 
     Searches ALL files for dynamic relations where member_tag == symbol_name.
-    Implementation:
-      step 1 — direct member_tag match with DYNAMIC_RELATION_TAGS
-      step 2 — re-export tracing
-      step 3 — attribute references
     """
     results: list[CodePosition] = []
     seen: set[tuple[str, int, str]] = set()  # (file_id, line, owner_tag) dedup
 
-    # step 1 — direct reference lookup
+    # Direct reference lookup with DYNAMIC_RELATION_TAGS
     placeholders = ",".join("?" for _ in DYNAMIC_RELATION_TAGS)
     cursor = ast_tag_db._conn.execute(
         f"""
@@ -53,19 +44,12 @@ def dynamic_scope_find_all_references(
             seen.add(key)
             results.append(CodePosition(*row))
 
-    # step 2 — re-export tracing
-    # if a file imports this symbol and re-exports it under the same name,
-    # references to the re-exported name in other files are also references
-    # to the original symbol. In our dataset this is uncommon, so we skip
-    # the recursive chase for now — step 1 catches direct references.
-
-    # step 3 — attribute references
-    # search for attr_name relations where member_tag = symbol_name
+    # Attribute references: Attribute.attr matches symbol_name
     attr_cursor = ast_tag_db._conn.execute(
         """
         SELECT file_id, line, owner_tag, relation_tag, member_tag, member_order_value
         FROM relations
-        WHERE relation_tag = 'attr_name' AND member_tag = ?
+        WHERE relation_tag = 'Attribute.attr' AND member_tag = ?
         """,
         (symbol_name,),
     )
@@ -85,7 +69,7 @@ if __name__ == "__main__":
     db = load_jsonl_dataset_into_ast_tag_db(dataset_dir)
     # pick some defined symbols
     rows = db.execute_raw_sql_query(
-        "SELECT DISTINCT member_tag FROM relations WHERE relation_tag = 'defines' LIMIT 10"
+        "SELECT DISTINCT member_tag FROM relations WHERE relation_tag = 'FunctionDef.name' LIMIT 10"
     )
     for (sym,) in rows:
         refs = dynamic_scope_find_all_references(db, sym)
