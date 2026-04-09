@@ -58,8 +58,8 @@ TMUX_CC_WORKSPACE_ROOT = _get_workspace_root()
 
 # Default configuration for tmux interactive mode
 TMUX_SESSION_PREFIX = "tmux_cc_interactive"
-TMUX_CHECK_INTERVAL = 3  # Check interval in seconds
-TMUX_IDLE_THRESHOLD = 5  # Number of consecutive unchanged checks to consider idle
+TMUX_CHECK_INTERVAL = 1  # Check interval in seconds (faster detection)
+TMUX_IDLE_THRESHOLD = 3  # Number of consecutive unchanged checks to consider idle
 TMUX_INITIAL_WAIT = 5    # Initial wait time for tmux_cc to start (seconds)
 
 # Prompt patterns that require auto-confirmation
@@ -189,6 +189,7 @@ def _wait_for_tmux_cc_idle(
     idle_threshold: int = TMUX_IDLE_THRESHOLD,
     auto_confirm: bool = True,
     timeout: float = 600,  # 10 minutes default timeout
+    output_file: str = None,  # Optional: check if output file exists
 ) -> str:
     """Wait for tmux_cc to become idle (screen content stops changing).
 
@@ -198,6 +199,7 @@ def _wait_for_tmux_cc_idle(
         idle_threshold: consecutive unchanged checks to consider idle
         auto_confirm: whether to auto-confirm prompts
         timeout: maximum wait time in seconds
+        output_file: if provided, also check if this file exists as completion signal
 
     Returns:
         The final screen content
@@ -216,13 +218,21 @@ def _wait_for_tmux_cc_idle(
             print(f"[tmux] Session '{session_name}' has been closed", file=sys.stderr)
             break
 
+        # Fast path: check if output file exists (most reliable completion signal)
+        if output_file and os.path.exists(output_file):
+            # Give a tiny bit more time for file to be fully written
+            time.sleep(0.5)
+            if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                print(f"[tmux_cc] Output file detected, task completed", file=sys.stderr)
+                break
+
         content = _tmux_capture_pane(session_name)
         clean_content = _strip_ansi(content)
 
         # Auto-confirm if enabled
         if auto_confirm:
             if _check_and_auto_confirm(session_name, AUTO_CONFIRM_PATTERNS):
-                time.sleep(1)  # Wait a bit after auto-confirm
+                time.sleep(0.5)  # Wait a bit after auto-confirm
                 idle_count = 0
                 last_content = ""  # Reset to re-check
                 continue
@@ -260,14 +270,13 @@ def _wait_for_tmux_cc_idle(
         if command_completed:
             if content == last_content:
                 idle_count += 1
-                print(f"[tmux] Screen unchanged ({idle_count}/{idle_threshold})", file=sys.stderr)
                 if idle_count >= idle_threshold:
+                    print(f"[tmux] Idle detected ({idle_count}/{idle_threshold})", file=sys.stderr)
                     break
             else:
                 idle_count = 0
                 last_content = content
         else:
-            print(f"[tmux_cc] Waiting for completion...", file=sys.stderr)
             last_content = content
 
         time.sleep(check_interval)
@@ -578,6 +587,7 @@ class TmuxCcTaskHandler:
             task_workspace = info["task_workspace"]
             ducc_prompt = info["ducc_prompt"]
             todo_file_path = info["todo_file_path"]
+            output_file = os.path.join(task_workspace, "output", "result.txt")
 
             print(f"\n[tmux_cc] Task {i + 1}/{total_tasks}: {todo_file_path}", file=sys.stderr)
             print(f"[tmux_cc] Workspace: {task_workspace}", file=sys.stderr)
@@ -592,11 +602,11 @@ class TmuxCcTaskHandler:
             # Send the prompt
             _tmux_send_keys(session_name, workspace_prompt, "Enter")
 
-            # Wait for this task to complete
-            print(f"[tmux_cc] Waiting for task to complete...", file=sys.stderr)
+            # Wait for this task to complete (with output file detection for faster completion)
             _wait_for_tmux_cc_idle(
                 session_name,
                 auto_confirm=auto_confirm,
+                output_file=output_file,
             )
 
             # Read output from file and copy to original location

@@ -8,6 +8,9 @@ test_baseline :=
     <- $num_iterations int # default 1
     <- $llm_method str # default "raw_llm_api"
     <- $workspace_dir (str | None) # None means temp directory
+    <- $interactive bool # default False, for tmux_cc mode
+    <- $auto_confirm bool # default True, auto-confirm prompts in tmux
+    <- $tmux_session str # default None, custom tmux session name
     #inline
     <- ($dataset_dir <- { ./codebase/ })
     <- { In most cases, operators on Symbolic[Tensor] should be symblic}
@@ -16,7 +19,10 @@ test_baseline :=
     <- (IterationList[int] <- range <- $num_iterations)
     <- ($baseline_output SymblicTensor[($total_batch_size,)]
         <- Import[./baseline_agent_model.viba].BaselineAgentModel
-        <- $llm_method)
+        <- $llm_method
+        <- $interactive
+        <- $auto_confirm
+        <- $tmux_session)
     <- ($baseline_loss
         <- Import[function/get_edit_distance]
         <- $baseline_output

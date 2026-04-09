@@ -10,15 +10,61 @@ TmuxCcTaskHandler :=
     # __init__
     <- ()
     # inline
-    <- (($workspace_dir, $prompt) <- $agent_task)
+    <- $flat_tasks _flatten_nested($agent_task)
     <- $tmux_cc_bin _find_tmux_cc_bin()
     <- $workspace_root _get_workspace_root()  # ~/.tmux_cc_tmp/ or TMUX_CC_WORKSPACE_ROOT
-    <- $task_workspace _create_task_workspace($workspace_root, $workspace_dir, $prompt)
-    <- $file_based_prompt _build_file_based_prompt($task_workspace)
-    <- $run_mode (if $interactive then "tmux" else "subprocess")
-    <- $tmux_cc_run (void <- $tmux_cc_bin <- $file_based_prompt <- $task_workspace <- $llm_env <- $run_mode)
-    <- (void <- batch_run <- NestList[$tmux_cc_run])
-    <- (void <- copy_output_from_workspace <- $task_workspace <- $workspace_dir)
+    <- (if $interactive then _run_interactive else _run_batch)
+
+_run_interactive :=
+    # Interactive mode: reuse single ducc session across all tasks
+    void
+    <- $flat_tasks list[$agent_task]
+    <- $llm_env dict[str, str]
+    <- $auto_confirm bool
+    <- $tmux_session str
+    # inline
+    # 1. Collect all task info first
+    <- $all_task_info list[_create_task_workspace($task) for $task in $flat_tasks]
+    # 2. Start ducc once in tmux session
+    <- $session_name ($tmux_session or "tmux_cc_interactive_batch")
+    <- void _tmux_kill_session($session_name)
+    <- void _tmux_create_session($session_name, $all_task_info[0].workspace)
+    <- void _tmux_send_keys($session_name, $tmux_cc_cmd, "Enter")
+    <- void _wait_and_auto_confirm($session_name, $auto_confirm)
+    # 3. Process each task using the same session (no restart)
+    <- (for $info in $all_task_info:
+        <- $prompt _build_absolute_prompt($info)
+        <- void _tmux_send_keys($session_name, $prompt, "Enter")
+        <- void _wait_for_tmux_cc_idle($session_name, output_file=$info.output_file)
+        <- void _copy_output($info))
+
+_run_batch :=
+    # Batch mode: run via subprocess (one subprocess per task)
+    void
+    <- $flat_tasks list[$agent_task]
+    <- $llm_env dict[str, str]
+    # inline
+    <- (for $task in $flat_tasks:
+        <- $task_workspace _create_task_workspace($task)
+        <- $prompt _build_file_based_prompt($task_workspace)
+        <- void subprocess.run([$tmux_cc_bin, "-p", $prompt, ...], cwd=$task_workspace)
+        <- void _copy_output($task_workspace))
+
+_wait_for_tmux_cc_idle :=
+    # Wait for ducc to complete task
+    str  # returns final screen content
+    <- $session_name str
+    <- $check_interval float # default 1 (was 3)
+    <- $idle_threshold int # default 3 (was 5)
+    <- $auto_confirm bool # default True
+    <- $timeout float # default 600
+    <- $output_file str # default None - fast completion detection
+    # inline
+    # Fast path: check if output file exists (most reliable)
+    <- (if $output_file and os.path.exists($output_file): return immediately)
+    # Slow path: monitor screen content changes
+    <- $command_completed (detect "Done." or idle prompt)
+    <- (wait until screen unchanged for $idle_threshold consecutive checks)
 
 _find_tmux_cc_bin :=
     # Find tmux_cc binary in order of priority
@@ -42,7 +88,8 @@ _get_workspace_root :=
 _create_task_workspace :=
     # Create workspace directory with input files
     str  # returns workspace path
-    <- $workspace_root str
+    <- $task_idx int
+    <- $file_idx int
     <- $original_workspace_dir str
     <- $prompt str
     <- $packed_workspace str
@@ -59,12 +106,20 @@ _create_task_workspace :=
     #           (ducc writes result.txt here)
 
 _build_file_based_prompt :=
-    # Build a short prompt that tells ducc to read from files
+    # Build a short prompt that tells ducc to read from files (relative paths)
     str
     <- $task_workspace str
     <- $todo_file_path str
     <- $todo_file_content_hint str
+
+_build_absolute_prompt :=
+    # Build a prompt with absolute paths for multi-task session reuse
+    str
+    <- $task_workspace str
+    <- $base_prompt str
+    <- $todo_file_path str
+    <- $task_idx int
+    <- $file_idx int
     # inline
-    # Returns prompt like:
-    #   "Read task from ./input/prompt.txt, codebase from ./input/packed_workspace.txt,
-    #    write output to ./output/result.txt"
+    # Returns prompt with absolute paths like:
+    #   "Task 1.0: Read from /abs/path/input/prompt.txt, write to /abs/path/output/result.txt"
