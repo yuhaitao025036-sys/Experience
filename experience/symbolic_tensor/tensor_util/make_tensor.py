@@ -116,10 +116,11 @@ def make_tensor(nested_data: NestedList, relative_to: str, symlink: bool = False
         if isinstance(opt_file_content_or_path, Path):
             src_path = str(opt_file_content_or_path)
             if symlink:
-                rel_src = os.path.relpath(
-                    str(opt_file_content_or_path.resolve()),
-                    os.path.dirname(file_path),
-                )
+                # Use realpath for both paths to ensure consistent path resolution
+                # on macOS where /var is a symlink to /private/var
+                real_src = os.path.realpath(str(opt_file_content_or_path))
+                real_file_dir = os.path.realpath(os.path.dirname(file_path))
+                rel_src = os.path.relpath(real_src, real_file_dir)
                 os.symlink(rel_src, file_path)
             else:
                 # Resolve symlinks for existence check; skip missing files

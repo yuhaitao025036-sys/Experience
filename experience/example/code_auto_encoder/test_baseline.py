@@ -56,6 +56,8 @@ def _run_single_iteration(
     interactive: bool = False,
     auto_confirm: bool = True,
     tmux_session: str = None,
+    dataset_cache_dir: str = None,
+    seed: int = None,
 ) -> List[float]:
     """Run a single iteration of the baseline test."""
     print(f"\n{'='*50}")
@@ -65,6 +67,8 @@ def _run_single_iteration(
     # <- Import[./parepare_dataset]
     masked_path_tensor, masked_content_tensor, gt_tensor, file_info = parepare_dataset(
         total_batch_size, dataset_dir, tmpdir,
+        dataset_cache_dir=dataset_cache_dir,
+        seed=seed,
     )
     print(f"Batch={total_batch_size}, files={masked_path_tensor.shape[1]}")
     for i, info in enumerate(file_info):
@@ -113,6 +117,8 @@ def test_baseline(
     interactive: bool = False,
     auto_confirm: bool = True,
     tmux_session: Optional[str] = None,
+    dataset_cache_dir: Optional[str] = None,
+    seed: Optional[int] = None,
 ) -> List[List[float]]:
     """test_baseline from test_baseline.viba.
 
@@ -125,6 +131,9 @@ def test_baseline(
             Use `tmux attach -t <session>` to watch ducc in real-time.
         auto_confirm: If True (and interactive), auto-confirm prompts in tmux.
         tmux_session: Custom tmux session name (interactive mode only).
+        dataset_cache_dir: If provided, cache/load dataset from this directory.
+            Ensures same input data across different model runs.
+        seed: Random seed for dataset generation reproducibility.
 
     Returns:
         List of baseline_loss per iteration
@@ -148,6 +157,8 @@ def test_baseline(
             interactive=interactive,
             auto_confirm=auto_confirm,
             tmux_session=tmux_session,
+            dataset_cache_dir=dataset_cache_dir,
+            seed=seed,
         )
         all_iteration_losses.append(baseline_loss)
 
@@ -198,6 +209,14 @@ if __name__ == "__main__":
         "--tmux-session", type=str, default=None,
         help="Custom tmux session name (only for interactive mode)"
     )
+    parser.add_argument(
+        "--dataset-cache-dir", type=str, default=None,
+        help="Directory to cache/load dataset. Ensures same input across model runs."
+    )
+    parser.add_argument(
+        "--seed", type=int, default=None,
+        help="Random seed for dataset generation reproducibility."
+    )
 
     args = parser.parse_args()
 
@@ -221,4 +240,6 @@ if __name__ == "__main__":
         interactive=args.interactive,
         auto_confirm=not args.no_auto_confirm,
         tmux_session=args.tmux_session,
+        dataset_cache_dir=args.dataset_cache_dir,
+        seed=args.seed,
     )

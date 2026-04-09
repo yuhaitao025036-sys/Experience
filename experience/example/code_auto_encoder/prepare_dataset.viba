@@ -1,44 +1,126 @@
 
-parepare_dataset := 
+parepare_dataset :=
     (
         $masked_file_path_tensor Symbolic[Tensor[($total_batch_size, $num_files)]],
         $masked_file_content_tensor Symbolic[TensorTensor[($total_batch_size, $num_files)]],
-        $ground_truth_content_tensor Symbolic[TensorTensor[($total_batch_size)]]
+        $ground_truth_content_tensor Symbolic[TensorTensor[($total_batch_size)]],
+        $file_info list[str]
     )
     <- $total_batch_size int
-    <- $dataset_dir
+    <- $dataset_dir str
+    <- $tmpdir str
+    <- $dataset_cache_dir (str | None) # default None, cache directory for reproducible experiments
+    <- $seed (int | None) # default None, random seed for reproducibility
     # inline
-    <- ($files list[($file_path str, $file_content)] <- {
-        fetch all files in experience/ 
+
+    # Try to load from cache first
+    <- ($cached (tuple | None) <- _load_dataset_cache
+        <- $dataset_cache_dir <- $total_batch_size <- $dataset_dir <- $seed <- $tmpdir)
+    <- { if cached is not None: return cached }
+
+    # Try to load partial cache for incremental generation
+    <- (($sample_indices list[dict], $file_paths list[str], $file_contents list[str], $start_index int)
+        <- _load_partial_cache <- $dataset_cache_dir <- $dataset_dir <- $seed)
+
+    # Set random seed if provided (advance to correct position)
+    <- { if seed is not None: random.seed(seed); skip start_index random calls }
+
+    # Fetch all files if not loaded from cache
+    <- ($files list[($file_path str, $file_content str)] <- {
+        fetch all .py files in dataset_dir if file_paths is empty
+        filter files with maskable range >= 5 lines
     })
-    <- {num_files = len(files)}
-    <- ((
-           $file_path_tensor Symbolic[Tensor(1, $num_files)],
-           $file_content_tensor Symbolic[Tensor(1, $num_files)]
-        )
-        <- unzip
-        <- $relative_to ($dataset_dir)
-        <- list[($file_path str, $file_content)])
-    <- (list[($random_file_index int, $random_range_line_start int, $random_range_line_end int)]
-        <- {
-            get multiple random ranges
-            skip comments lines and code in __main__ block
-            the range size should be in range (5, 10)
-        }
-        <- $total_batch_size
-        <- $num_files)
-    <- ((
-            $sole_masked_file_path_tensor Symbolic[Tensor(1, $num_files)], 
-            $sole_masked_file_content_tensor Symbolic[Tensor(1, $num_files)], 
-            $sole_ground_truth_content_tensor Symbolic[Tensor(1,)]
-        )
-        <- {
-            copy file $random_file_index
-            mask ($random_range_line_start, $random_range_line_end) with kMaskedHint
-        }
-        <- slice_view
-        <- $file_path_tensor
-        <- $file_content_tensor)
-    <- ($masked_file_path_tensor <- list[$sole_masked_file_path_tensor])
-    <- ($masked_file_content_tensor <- list[$sole_masked_file_content_tensor])
-    <- ($ground_truth_content_tensor <- list[$sole_ground_truth_content_tensor])
+    <- { num_files = len(file_paths) }
+    <- ($file_paths list[str] <- [fp for fp, _ in files])
+    <- ($file_contents list[str] <- [fc for _, fc in files])
+
+    # Generate remaining samples (from start_index to total_batch_size)
+    <- (list[$sample dict] <- {
+        for each sample:
+            file_idx = random.randint(0, num_files - 1)
+            mask_start, mask_end, ground_truth = _get_random_mask_range(file_contents[file_idx])
+            append {file_idx, mask_start, mask_end, ground_truth} to sample_indices
+    })
+
+    # Rebuild full masked data from indices
+    <- (($all_masked_paths list[list[str]], $all_masked_contents list[list[str]],
+         $all_ground_truths list[str], $file_info list[str])
+        <- _rebuild_masked_contents <- $file_paths <- $file_contents <- $sample_indices)
+
+    # Create symbolic tensors
+    <- ($masked_file_path_tensor <- make_tensor <- $all_masked_paths <- $tmpdir)
+    <- ($masked_file_content_tensor <- make_tensor <- $all_masked_contents <- $tmpdir)
+    <- ($ground_truth_content_tensor <- make_tensor <- $all_ground_truths <- $tmpdir)
+
+    # Save to cache if requested
+    <- (void <- _save_dataset_cache
+        <- $dataset_cache_dir <- $total_batch_size <- $dataset_dir <- $seed
+        <- $file_paths <- $file_contents <- $sample_indices <- $start_index)
+
+
+# Cache format v2: indexed storage
+# Structure:
+#   {cache_dir}/seed_{N}/
+#   ├── metadata.json           # {dataset_dir, seed, num_files, cached_samples, version}
+#   ├── source_files/
+#   │   ├── index.json          # [file_path_0, file_path_1, ...]
+#   │   └── contents/
+#   │       ├── 0.txt           # content of file 0
+#   │       └── ...
+#   └── samples/
+#       ├── 0.json              # {file_idx, mask_start, mask_end, ground_truth}
+#       └── ...
+
+_get_seed_subdir :=
+    str
+    <- $cache_dir str
+    <- $seed (int | None)
+    # inline
+    <- { return f"{cache_dir}/seed_{seed}" if seed is not None else f"{cache_dir}/seed_none" }
+
+_save_dataset_cache :=
+    void
+    <- $cache_dir str
+    <- $total_batch_size int
+    <- $dataset_dir str
+    <- $seed (int | None)
+    <- $file_paths list[str]
+    <- $file_contents list[str]
+    <- $sample_indices list[dict]
+    <- $start_index int # only save samples starting from this index
+    # inline
+    <- ($seed_dir <- _get_seed_subdir <- $cache_dir <- $seed)
+    <- { save metadata.json with version=2, dataset_dir, seed, num_files, cached_samples }
+    <- { save source_files/index.json and contents/*.txt if not exists }
+    <- { save samples/{i}.json for i in range(start_index, total_batch_size) }
+
+_load_dataset_cache :=
+    (tuple | None) # returns (masked_path_tensor, masked_content_tensor, gt_tensor, file_info) or None
+    <- $cache_dir str
+    <- $total_batch_size int
+    <- $dataset_dir str
+    <- $seed (int | None)
+    <- $tmpdir str
+    # inline
+    <- { check if cache exists and has enough samples, return None if not }
+    <- { load source_files and sample indices }
+    <- { rebuild masked_contents from indices }
+    <- { create symbolic tensors and return }
+
+_load_partial_cache :=
+    (list[dict], list[str], list[str], int) # (sample_indices, file_paths, file_contents, cached_count)
+    <- $cache_dir str
+    <- $dataset_dir str
+    <- $seed (int | None)
+    # inline
+    <- { load existing samples for incremental generation }
+    <- { return empty lists if no valid cache exists }
+
+_rebuild_masked_contents :=
+    (list[list[str]], list[list[str]], list[str], list[str])
+    <- $file_paths list[str]
+    <- $file_contents list[str]
+    <- $sample dict # {file_idx, mask_start, mask_end, ground_truth}
+    # inline
+    <- { copy file_contents, apply mask to file_contents[file_idx] }
+    <- { return (masked_paths, masked_contents, ground_truth, file_info) }

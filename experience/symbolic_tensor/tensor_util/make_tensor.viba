@@ -15,8 +15,8 @@ make_tensor :=
     <- $get_index_dentries (list[$digit str] <- str_to_digit_list <- str <- $i)
     <- ($tensor_root_dir <- path_join <- $tensor.st_relative_to <- $tensor.st_tensor_uid)
     <- $get_file_path (
-        str 
-        <- path_join 
+        str
+        <- path_join
         <- $tensor_root_dir
         <- "storage"
         <- (path_join <- $get_index_dentries <- $i)
@@ -26,12 +26,17 @@ make_tensor :=
         <- {
             save to file system if opt_file_content_or_path is not None.
             create no path otherwise.
-        } 
-        <- $path ($get_file_path <- ...) 
+
+            For symlink creation:
+            Use os.path.realpath() for BOTH source and target directory
+            to ensure consistent path resolution on macOS where /var -> /private/var.
+            This prevents issues like /private/private/var when resolving symlinks.
+        }
+        <- $path ($get_file_path <- ...)
         <- $opt_file_content_or_path
         <- $symlink)
-    <- (void 
-        <- save_to_file_system 
+    <- (void
+        <- save_to_file_system
         <- $path ($joined_path <- tensor_root_dir <- "shape")
         <- $content ($json_dumped_str <- $shape))
     # the values in wrapper `tensor` means that
