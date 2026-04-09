@@ -38,12 +38,13 @@ This enables:
 
 ## Architecture
 
-### AstTagRelation Schema
+### AstTagRecord Schema
 
-Each relation captures a parent-child relationship in the AST:
+Each record captures a parent-child relationship in the AST:
 
 ```python
 {
+    "file_id": "main.py.jsonl",       # Source file identifier
     "line": 10,
     "relation_tag": "Call.func",      # Type.field_name format
     "owner_tag": "$Call_3",           # Unique node identifier
@@ -90,7 +91,7 @@ def greet(name: str) -> str:
 '''
 
 jsonl = convert_python_to_ast_tag_jsonl(source)
-# Each line is a JSON AstTagRelation record
+# Each line is a JSON AstTagRecord
 ```
 
 ### Load into Database
@@ -121,7 +122,7 @@ refs = dynamic_scope_find_all_references(db, "make_tensor")
 
 ```
 experience/ast_tag/
-├── ast_tag_relation.viba      # Schema definition
+├── ast_tag_record.viba        # Schema definition
 ├── ast_tag_db.py              # SQLite database interface
 ├── convert_python_to_ast_tag_jsonl.py    # Python -> tags
 ├── convert_ast_tag_jsonl_to_python.py    # Tags -> Python

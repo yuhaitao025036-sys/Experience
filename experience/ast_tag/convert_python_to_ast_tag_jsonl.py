@@ -1,4 +1,4 @@
-"""Convert Python AST to AstTagRelation JSONL.
+"""Convert Python AST to AstTagRecord JSONL.
 
 Relation tags align with Python ast module:
 - owner_tag: $Type_N (CamelCase matching ast._type), <module> for root

@@ -1,4 +1,4 @@
-"""Convert AST JSON tree to AstTagRelation JSONL.
+"""Convert AST JSON tree to AstTagRecord JSONL.
 
 Thin wrapper: wraps body list in a Module node and runs the generic extractor.
 """

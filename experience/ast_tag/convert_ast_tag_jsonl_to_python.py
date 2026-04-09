@@ -1,4 +1,4 @@
-"""Convert AstTagRelation JSONL to Python source code.
+"""Convert AstTagRecord JSONL to Python source code.
 
 Pipeline:
   1. convert_ast_tag_jsonl_to_ast_json: JSONL records → AST JSON dicts
@@ -246,7 +246,7 @@ def _unparse_stub(node: Any) -> str:
 # ---------------------------------------------------------------------------
 
 def convert_jsonl_to_python(records: List[Dict]) -> str:
-    """Convert AstTagRelation JSONL records to Python source code.
+    """Convert AstTagRecord JSONL records to Python source code.
 
     Reconstructs AST JSON via convert_ast_tag_jsonl_to_ast_json,
     then generates Python via ast.unparse.

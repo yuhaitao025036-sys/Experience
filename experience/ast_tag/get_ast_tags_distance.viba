@@ -1,7 +1,7 @@
 get_ast_tags_distance :=
     float
-    <- $lhs list[AstTagRelation[Python]]
-    <- $rhs list[AstTagRelation[Python]]
+    <- $lhs list[AstTagRecord[Python]]
+    <- $rhs list[AstTagRecord[Python]]
     # inline
     <- Import[./convert_ast_tag_jsonl_to_ast_json]
     <- Import[./get_json_distance]

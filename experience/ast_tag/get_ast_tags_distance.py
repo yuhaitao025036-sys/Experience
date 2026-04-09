@@ -13,7 +13,7 @@ from experience.ast_tag.get_json_distance import get_json_distance
 
 
 # ---------------------------------------------------------------------------
-# AstTagRelation[Python] — typed dict matching ast_tag_relation.viba
+# AstTagRecord[Python] — typed dict matching ast_tag_record.viba
 # ---------------------------------------------------------------------------
 
 #: Symbol: $Type_N owner tags, leaf-inlined member tags, or <module>.
@@ -23,8 +23,9 @@ Symbol = Union[str, int, float, bool]
 RelationTag = str
 
 
-class AstTagRelation(TypedDict):
-    """A single AST tag relation record (AstTagRelation[Python])."""
+class AstTagRecord(TypedDict):
+    """A single AST tag record (AstTagRecord[Python])."""
+    file_id: str
     line: int
     relation_tag: RelationTag
     owner_tag: Symbol
@@ -33,10 +34,10 @@ class AstTagRelation(TypedDict):
 
 
 def get_ast_tags_distance(
-    lhs: List[AstTagRelation],
-    rhs: List[AstTagRelation],
+    lhs: List[AstTagRecord],
+    rhs: List[AstTagRecord],
 ) -> float:
-    """Distance between two AST tag relation lists.
+    """Distance between two AST tag record lists.
 
     Converts each to AST JSON tree via convert_ast_tag_jsonl_to_ast_json,
     then computes get_json_distance on the resulting trees.

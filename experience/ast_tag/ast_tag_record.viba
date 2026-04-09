@@ -1,8 +1,229 @@
-AstTagRecord :=
-    DatabaseRecord
+AstTagRecord[ProgrammingLanguage] :=
+    Object
     * $file_id str
     * $line int
-    * $relation_tag str
-    * $owner_tag str
-    * $member_tag str
+    * $relation_tag RelationTagEnum[ProgrammingLanguage]
+    * $owner_tag Symbol[ProgrammingLanguage]
+    * $member_tag Symbol[ProgrammingLanguage]
     * $member_order_value int
+
+Symbol[ProgrammingLanguage] := WithConstraint[
+    str | int | float | bool,
+    $constraint {
+        no space/tab/newline characters contained except string literal.
+        each $value is a bridge cross lines and files.
+        owner_tag: $Type_N (CamelCase ast _type, e.g. $FunctionDef_0, $Call_3)
+                   or <module> for root.
+        member_tag leaf inlining:
+            Name -> id value, Constant -> repr(value),
+            operators -> _type name (Add, Eq, Not, ...),
+            <null> for None in lists.
+    }
+]
+
+RelationTagEnum[ProgrammingLanguage] := WithConstraint[
+    BaseRelationTagEnum | PlRelationTagEnum[ProgrammingLanguage],
+    $constraint {
+        format: "Type.field_name" aligned with ast module.
+        Type is the ast node _type (CamelCase), field_name is the ast field.
+        self-documenting: each tag encodes both parent type and child role.
+        str($value) should be a Symbol[ProgrammingLanguage]
+    }
+]
+
+BaseRelationTagEnum := WithConstraint[
+    Oneof
+    # module
+    | "Module.body"
+    # function definition
+    | "FunctionDef.name"
+    | "FunctionDef.args"
+    | "FunctionDef.body"
+    | "FunctionDef.decorator_list"
+    | "FunctionDef.returns"
+    # class definition
+    | "ClassDef.name"
+    | "ClassDef.bases"
+    | "ClassDef.keywords"
+    | "ClassDef.body"
+    | "ClassDef.decorator_list"
+    # parameters
+    | "arguments.args"
+    | "arguments.defaults"
+    | "arg.arg"
+    | "arg.annotation"
+    | "keyword.arg"
+    | "keyword.value"
+    # statements
+    | "Return.value"
+    | "Assign.targets"
+    | "Assign.value"
+    | "AugAssign.target"
+    | "AugAssign.op"
+    | "AugAssign.value"
+    | "Delete.targets"
+    # control flow
+    | "If.test"
+    | "If.body"
+    | "If.orelse"
+    | "For.target"
+    | "For.iter"
+    | "For.body"
+    | "For.orelse"
+    | "While.test"
+    | "While.body"
+    | "While.orelse"
+    # exception
+    | "Try.body"
+    | "Try.handlers"
+    | "Try.orelse"
+    | "Try.finalbody"
+    | "ExceptHandler.type"
+    | "ExceptHandler.name"
+    | "ExceptHandler.body"
+    | "Raise.exc"
+    | "Raise.cause"
+    | "Assert.test"
+    | "Assert.msg"
+    # import
+    | "Import.names"
+    | "ImportFrom.names"
+    | "ImportFrom.module"
+    | "ImportFrom.level"
+    | "alias.name"
+    | "alias.asname"
+    # expressions
+    | "Expr.value"
+    | "Call.func"
+    | "Call.args"
+    | "Call.keywords"
+    | "Attribute.value"
+    | "Attribute.attr"
+    | "Subscript.value"
+    | "Subscript.slice"
+    # operators
+    | "BoolOp.op"
+    | "BoolOp.values"
+    | "BinOp.left"
+    | "BinOp.op"
+    | "BinOp.right"
+    | "UnaryOp.op"
+    | "UnaryOp.operand"
+    | "Compare.left"
+    | "Compare.ops"
+    | "Compare.comparators"
+    # collections
+    | "Dict.keys"
+    | "Dict.values"
+    | "Set.elts"
+    | "List.elts"
+    | "Tuple.elts"
+    # conditional expression
+    | "IfExp.test"
+    | "IfExp.body"
+    | "IfExp.orelse"
+    # scope
+    | "Global.names"
+    | "Nonlocal.names",
+    $constraint {
+        1. format: Type.field_name aligned with ast module.
+        2. cover the most programming language common ast relationships.
+        3. self-documenting: Type encodes the parent, field_name encodes the child role.
+    }
+]
+
+PlRelationTagEnum[Python] := WithConstraint[
+    Oneof
+    # async variants
+    | "AsyncFunctionDef.name"
+    | "AsyncFunctionDef.args"
+    | "AsyncFunctionDef.body"
+    | "AsyncFunctionDef.decorator_list"
+    | "AsyncFunctionDef.returns"
+    | "AsyncFor.target"
+    | "AsyncFor.iter"
+    | "AsyncFor.body"
+    | "AsyncFor.orelse"
+    | "AsyncWith.items"
+    | "AsyncWith.body"
+    # parameters (positional-only, keyword-only, varargs)
+    | "arguments.posonlyargs"
+    | "arguments.kwonlyargs"
+    | "arguments.vararg"
+    | "arguments.kwarg"
+    | "arguments.kw_defaults"
+    # with
+    | "With.items"
+    | "With.body"
+    | "withitem.context_expr"
+    | "withitem.optional_vars"
+    # try-star
+    | "TryStar.body"
+    | "TryStar.handlers"
+    | "TryStar.orelse"
+    | "TryStar.finalbody"
+    # annotation
+    | "AnnAssign.target"
+    | "AnnAssign.annotation"
+    | "AnnAssign.value"
+    | "AnnAssign.simple"
+    # yield / await
+    | "Yield.value"
+    | "YieldFrom.value"
+    | "Await.value"
+    # walrus
+    | "NamedExpr.target"
+    | "NamedExpr.value"
+    # starred
+    | "Starred.value"
+    # comprehension
+    | "ListComp.elt"
+    | "ListComp.generators"
+    | "SetComp.elt"
+    | "SetComp.generators"
+    | "GeneratorExp.elt"
+    | "GeneratorExp.generators"
+    | "DictComp.key"
+    | "DictComp.value"
+    | "DictComp.generators"
+    | "comprehension.target"
+    | "comprehension.iter"
+    | "comprehension.ifs"
+    | "comprehension.is_async"
+    # string
+    | "JoinedStr.values"
+    | "FormattedValue.value"
+    | "FormattedValue.conversion"
+    | "FormattedValue.format_spec"
+    # lambda
+    | "Lambda.args"
+    | "Lambda.body"
+    # slice
+    | "Slice.lower"
+    | "Slice.upper"
+    | "Slice.step"
+    # match (Python 3.10+)
+    | "Match.subject"
+    | "Match.cases"
+    | "match_case.pattern"
+    | "match_case.guard"
+    | "match_case.body"
+    | "MatchValue.value"
+    | "MatchSingleton.value"
+    | "MatchSequence.patterns"
+    | "MatchMapping.keys"
+    | "MatchMapping.patterns"
+    | "MatchMapping.rest"
+    | "MatchClass.cls"
+    | "MatchClass.patterns"
+    | "MatchClass.kwd_attrs"
+    | "MatchClass.kwd_patterns"
+    | "MatchStar.name"
+    | "MatchAs.pattern"
+    | "MatchAs.name"
+    | "MatchOr.patterns",
+    $constraint {
+        1. format: Type.field_name aligned with Python ast module.
+        2. strong enough to support source_code[Python]->ast->JsonLines[AstTagRecord]->ast->source_code[Python] roundtrip tests.
+    }
+]

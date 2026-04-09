@@ -1,11 +1,11 @@
 """
-AstTagRecord :=
-    DatabaseRecord
+AstTagRecord[ProgrammingLanguage] :=
+    Object
     * $file_id str
     * $line int
-    * $relation_tag str
-    * $owner_tag str
-    * $member_tag str
+    * $relation_tag RelationTagEnum[ProgrammingLanguage]
+    * $owner_tag Symbol[ProgrammingLanguage]
+    * $member_tag Symbol[ProgrammingLanguage]
     * $member_order_value int
 """
 
@@ -25,8 +25,8 @@ if __name__ == "__main__":
     r = AstTagRecord(
         file_id="test.jsonl",
         line=1,
-        relation_tag="defines",
-        owner_tag="$functiondef_0",
+        relation_tag="FunctionDef.name",
+        owner_tag="$FunctionDef_0",
         member_tag="pack_dir",
         member_order_value=0,
     )

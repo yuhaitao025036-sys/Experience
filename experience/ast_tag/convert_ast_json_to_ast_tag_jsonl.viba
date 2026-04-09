@@ -1,5 +1,5 @@
 convert_ast_json_to_ast_tag_jsonl :=
-    list[AstTagRelation[Python]]
+    list[AstTagRecord[Python]]
     <- $json list[PythonJson]
     <- $inner_path_to_tmp_var_name dict[str, str]
     # inline

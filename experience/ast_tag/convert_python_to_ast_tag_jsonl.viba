@@ -1,9 +1,9 @@
 convert_python_to_ast_tag_jsonl[ProgrammingLanguage] :=
-    JsonLines[$ast_tag_rel AstTagRelation[ProgrammingLanguage]]
+    JsonLines[$ast_tag_rec AstTagRecord[ProgrammingLanguage]]
     <- $ast_obj ast[ProgrammingLanguage]
     # inline
-    <- Import[./ast_tag_relation.viba]
-    <- { Assert that the $ast_tag_rel meets the AstTagRelation schema }
+    <- Import[./ast_tag_record.viba]
+    <- { Assert that the $ast_tag_rec meets the AstTagRecord schema }
     <- {
         all Symbol[ProgrammingLanguage]
         instances are used to generally connect semantics across lines and

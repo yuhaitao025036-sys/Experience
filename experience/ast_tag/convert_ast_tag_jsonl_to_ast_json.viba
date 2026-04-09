@@ -1,6 +1,6 @@
 convert_ast_tag_jsonl_to_ast_json :=
     ($json list[PythonJson], $inner_path_to_tmp_var_name dict[str, str])
-    <- list[AstTagRelation[Python]]
+    <- list[AstTagRecord[Python]]
     # inline
     <- {
         1. reconstruct ast in json format

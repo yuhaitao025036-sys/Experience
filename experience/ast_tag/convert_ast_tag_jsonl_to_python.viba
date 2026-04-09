@@ -1,9 +1,9 @@
 convert_ast_tag_jsonl_to_python[ProgrammingLanguage] :=
     $ast_obj ast[ProgrammingLanguage]
-    <- JsonLines[$ast_tag_rel AstTagRelation[ProgrammingLanguage]]
+    <- JsonLines[$ast_tag_rec AstTagRecord[ProgrammingLanguage]]
     # inline
-    <- Import[./ast_tag_relation.viba]
-    <- { Assert that the $ast_tag_rel meets the AstTagRelation schema }
+    <- Import[./ast_tag_record.viba]
+    <- { Assert that the $ast_tag_rec meets the AstTagRecord schema }
     <- {
         1. build relation index: group records by (owner_tag, relation_tag)
         2. reconstruct AST JSON via convert_ast_tag_jsonl_to_ast_json

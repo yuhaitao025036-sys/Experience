@@ -30,7 +30,7 @@ load_jsonl_dataset_into_ast_tag_db :=
     <- $dataset_dir str
     <- $db_path str # default ":memory:"
     # inline
-    <- Import[../../ast_tag/ast_tag_relation.viba]
+    <- Import[./ast_tag_record.viba]
     <- ($conn sqlite3.Connection <- sqlite3.connect <- $db_path)
     <- (void <- create_ast_tag_db_schema <- $conn)
     <- (void <- { walk dataset_dir, load all .jsonl, INSERT as AstTagRecord rows } <- $conn <- $dataset_dir)
