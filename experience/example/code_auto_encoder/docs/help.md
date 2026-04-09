@@ -4,17 +4,61 @@ This document explains how to use `test_baseline.py` to run baseline tests for t
 
 ## Quick Start
 
-```bash
-# Non-interactive mode (recommended for batch processing)
-python experience/example/code_auto_encoder/test_baseline.py \
-    --llm-method tmux_cc
+The system supports three `--llm-method` options. Below are complete example commands for each method:
 
-# Interactive mode (visual observation of tmux_cc execution)
+### 1. raw_llm_api (Direct API Call)
+
+The simplest approach, directly calling the LLM API:
+
+```bash
+python experience/example/code_auto_encoder/test_baseline.py \
+    --llm-method raw_llm_api \
+    --num-iterations 1 \
+    --total-batch-size 1 \
+    --dataset-cache-dir ./my_experiment \
+    --seed 42
+```
+
+### 2. coding_agent (Coding Agent Mode)
+
+Uses the coding agent framework:
+
+```bash
+python experience/example/code_auto_encoder/test_baseline.py \
+    --llm-method coding_agent \
+    --num-iterations 1 \
+    --total-batch-size 1 \
+    --dataset-cache-dir ./my_experiment \
+    --seed 42
+```
+
+### 3. tmux_cc (Tmux Interactive Mode)
+
+Runs ducc via tmux with visual observation support:
+
+```bash
 python experience/example/code_auto_encoder/test_baseline.py \
     --llm-method tmux_cc \
     --interactive \
-    --tmux-session manual_tmux_cc
+    --tmux-session manual_ducc \
+    --num-iterations 1 \
+    --total-batch-size 1 \
+    --dataset-cache-dir ./my_experiment \
+    --seed 42
 ```
+
+Observe execution in another terminal:
+```bash
+tmux attach -t manual_ducc
+```
+
+### Method Comparison
+
+| Method | Features | Use Cases |
+|--------|----------|-----------|
+| `raw_llm_api` | Direct API call, fastest | Quick testing, batch evaluation |
+| `coding_agent` | With agent framework | Requires file operation capabilities |
+| `tmux_cc` | Visual interaction | Debugging, observing agent behavior |
 
 ## Architecture Overview
 
@@ -97,6 +141,8 @@ python experience/example/code_auto_encoder/test_baseline.py [OPTIONS]
 | `--interactive` | flag | False | Enable tmux interactive mode (only for tmux_cc) |
 | `--no-auto-confirm` | flag | False | Disable auto-confirm (manual operation in interactive mode) |
 | `--tmux-session` | str | None | Custom tmux session name |
+| `--dataset-cache-dir` | str | None | Dataset cache directory for reproducible experiments |
+| `--seed` | int | None | Random seed for dataset generation reproducibility |
 
 ## LLM Methods
 
@@ -281,7 +327,53 @@ python experience/example/code_auto_encoder/test_baseline.py \
     --llm-method raw_llm_api
 ```
 
-### Example 2: tmux_cc Interactive Mode Observation
+### Example 2: Model Comparison with Fixed Dataset
+
+Use `--dataset-cache-dir` and `--seed` to ensure different models use the same input data:
+
+```bash
+# Model A: Generate and cache dataset
+python experience/example/code_auto_encoder/test_baseline.py \
+    --total-batch-size 16 \
+    --llm-method raw_llm_api \
+    --dataset-cache-dir ./my_experiment \
+    --seed 42
+
+# Model B: Use the same cached dataset
+python experience/example/code_auto_encoder/test_baseline.py \
+    --total-batch-size 16 \
+    --llm-method tmux_cc \
+    --dataset-cache-dir ./my_experiment \
+    --seed 42
+
+# Model C: Use the same cached dataset
+python experience/example/code_auto_encoder/test_baseline.py \
+    --total-batch-size 16 \
+    --llm-method coding_agent \
+    --dataset-cache-dir ./my_experiment \
+    --seed 42
+```
+
+### Example 3: Incremental Dataset Expansion
+
+```bash
+# Start with small batch for quick validation
+python experience/example/code_auto_encoder/test_baseline.py \
+    --total-batch-size 5 \
+    --llm-method raw_llm_api \
+    --dataset-cache-dir ./my_experiment \
+    --seed 42
+
+# Expand to larger batch (reuses first 5 samples)
+python experience/example/code_auto_encoder/test_baseline.py \
+    --total-batch-size 50 \
+    --llm-method raw_llm_api \
+    --dataset-cache-dir ./my_experiment \
+    --seed 42
+# Output: Cache has 5 samples, need 50, will generate more
+```
+
+### Example 4: tmux_cc Interactive Mode Observation
 
 ```bash
 # Terminal 1: Start test
@@ -294,7 +386,7 @@ python experience/example/code_auto_encoder/test_baseline.py \
 tmux attach -t tmux_cc_interactive_0_0
 ```
 
-### Example 3: Multiple Iterations + Custom Workspace
+### Example 5: Multiple Iterations + Custom Workspace
 
 ```bash
 python experience/example/code_auto_encoder/test_baseline.py \
@@ -304,7 +396,7 @@ python experience/example/code_auto_encoder/test_baseline.py \
     --workspace-dir /tmp/my_workspace
 ```
 
-### Example 4: Manual tmux_cc Control (auto-confirm disabled)
+### Example 6: Manual tmux_cc Control (auto-confirm disabled)
 
 ```bash
 # Terminal 1: Start test
@@ -340,6 +432,15 @@ test_baseline(
     interactive=True,
     auto_confirm=True,
     tmux_session="my_session",
+)
+
+# With dataset caching for reproducible experiments
+test_baseline(
+    total_batch_size=16,
+    num_iterations=1,
+    llm_method="raw_llm_api",
+    dataset_cache_dir="./my_experiment",
+    seed=42,
 )
 ```
 
@@ -408,4 +509,50 @@ cat ~/.tmux_cc_tmp/task_*/input/task_info.txt
 
 # Check output
 cat ~/.tmux_cc_tmp/task_*/output/result.txt
+```
+
+### Q: How to ensure different models use the same test data
+
+Use `--dataset-cache-dir` and `--seed` to cache and reuse dataset:
+
+```bash
+# First run: generates and caches dataset
+python test_baseline.py --llm-method raw_llm_api \
+    --dataset-cache-dir ./exp_v1 --seed 42
+
+# Second run: loads from cache (same data)
+python test_baseline.py --llm-method tmux_cc \
+    --dataset-cache-dir ./exp_v1 --seed 42
+```
+
+### Q: Where is the dataset cache stored
+
+The cache is stored in the directory you specify with `--dataset-cache-dir`:
+
+```
+my_experiment/
+├── seed_42/                    # seed=42 的数据
+│   ├── metadata.json
+│   ├── source_files/
+│   │   ├── index.json
+│   │   └── contents/
+│   └── samples/
+│       ├── 0.json
+│       └── ...
+└── seed_123/                   # seed=123 的数据
+    └── ...
+```
+
+See [dataset_cache.md](docs/dataset_cache.md) for detailed format documentation.
+
+### Q: How to expand dataset size while keeping existing samples
+
+Just increase `--total-batch-size` with the same `--seed` and `--dataset-cache-dir`:
+
+```bash
+# First: 5 samples
+python test_baseline.py --dataset-cache-dir ./exp --seed 42 --total-batch-size 5
+
+# Later: expand to 50 samples (reuses first 5)
+python test_baseline.py --dataset-cache-dir ./exp --seed 42 --total-batch-size 50
 ```

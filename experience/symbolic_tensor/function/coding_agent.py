@@ -37,7 +37,22 @@ def _copy_back_to_storage_view(mutable_dir: str, view_tensor: torch.Tensor) -> N
         os.path.join(*digits),
         "data",
     )
-    real_storage_path = os.path.realpath(view_storage_path)
+    # Resolve symlink to get real storage path
+    # Note: If it's a symlink, we need to resolve it; if not, use the path directly
+    if os.path.islink(view_storage_path):
+        # Read the symlink target and resolve it relative to the symlink's directory
+        link_target = os.readlink(view_storage_path)
+        if not os.path.isabs(link_target):
+            link_dir = os.path.dirname(view_storage_path)
+            real_storage_path = os.path.normpath(os.path.join(link_dir, link_target))
+        else:
+            real_storage_path = link_target
+    else:
+        real_storage_path = view_storage_path
+
+    # Ensure parent directory exists
+    os.makedirs(os.path.dirname(real_storage_path), exist_ok=True)
+
     mutable_file = os.path.join(mutable_dir, "data.txt")
     if os.path.isfile(mutable_file):
         with open(mutable_file, "r", encoding="utf-8") as f:
