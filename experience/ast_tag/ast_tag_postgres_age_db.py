@@ -285,6 +285,17 @@ def create_ast_tag_age_graph(
 # Factory function
 # ═══════════════════════════════════════════════════════════
 
+def _batch_cypher_exec(
+    conn: "psycopg2.extensions.connection",
+    graph_name: str,
+    cypher: str,
+) -> None:
+    """Execute a (possibly large) Cypher mutation with no result needed."""
+    sql = f"SELECT * FROM cypher('{graph_name}', $${cypher}$$) as t(v agtype)"
+    with conn.cursor() as cur:
+        cur.execute(sql)
+
+
 def load_jsonl_dataset_into_ast_tag_age_db(
     dataset_dir: str,
     conn_params: str = "dbname=ast_tag",
@@ -292,8 +303,14 @@ def load_jsonl_dataset_into_ast_tag_age_db(
 ) -> AstTagPostgresAgeDB:
     """
     Walk dataset_dir, load all .jsonl files into the AGE graph.
+    Direct SQL bulk-insert into AGE internal tables (bypasses Cypher).
     Returns a ready-to-query AstTagPostgresAgeDB.
     """
+    import time as _time
+    from psycopg2.extras import execute_values
+
+    t0 = _time.perf_counter()
+
     conn = psycopg2.connect(conn_params)
     conn.autocommit = False
 
@@ -315,73 +332,136 @@ def load_jsonl_dataset_into_ast_tag_age_db(
     create_ast_tag_age_graph(conn, graph_name)
     _age_setup(conn)
 
+    # ── Get label metadata ───────────────────────────────────────
+    vlabel_ids: dict[str, int] = {}
+    elabel_ids: dict[str, int] = {}
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT l.name, l.id, l.kind
+            FROM ag_catalog.ag_label l
+            WHERE l.graph = (SELECT graphid FROM ag_catalog.ag_graph WHERE name = %s)
+        """, (graph_name,))
+        for name, lid, kind in cur.fetchall():
+            if kind == 'v':
+                vlabel_ids[name] = lid
+            elif kind == 'e':
+                elabel_ids[name] = lid
+
+    # ── Parse all records, deduplicate nodes ─────────────────────
     dataset_path = Path(dataset_dir)
-    total_records = 0
+    records: list[tuple] = []
+    unique_nodes: dict[tuple, bool] = {}  # (label, symbol, file_id|None)
 
     for jsonl_file in sorted(dataset_path.rglob("*.jsonl")):
         file_id = str(jsonl_file.relative_to(dataset_path))
-        esc_fid = _escape_cypher_string(file_id)
-
         with open(jsonl_file, "r") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
+            for raw_line in f:
+                raw_line = raw_line.strip()
+                if not raw_line:
                     continue
-                record = json.loads(line)
-                owner_tag = str(record["owner_tag"])
-                member_tag = str(record["member_tag"])
-                relation_tag = record["relation_tag"]
-                line_no = record["line"]
-                member_order_value = record["member_order_value"]
+                record = json.loads(raw_line)
+                ot = str(record["owner_tag"])
+                mt = str(record["member_tag"])
+                rt = record["relation_tag"]
+                ln = record["line"]
+                mov = record["member_order_value"]
 
-                owner_label = classify_node_label(owner_tag)
-                member_label = classify_node_label(member_tag)
-                esc_owner = _escape_cypher_string(owner_tag)
-                esc_member = _escape_cypher_string(member_tag)
+                ol = classify_node_label(ot)
+                ml = classify_node_label(mt)
 
-                # Build MERGE for owner node
-                if _is_file_scoped(owner_label):
-                    owner_merge = (
-                        f"MERGE (owner:{owner_label} "
-                        f"{{symbol: '{esc_owner}', file_id: '{esc_fid}'}})"
-                    )
-                else:
-                    owner_merge = (
-                        f"MERGE (owner:{owner_label} {{symbol: '{esc_owner}'}})"
-                    )
+                ok = (ol, ot, file_id if _is_file_scoped(ol) else None)
+                mk = (ml, mt, file_id if _is_file_scoped(ml) else None)
+                unique_nodes[ok] = True
+                unique_nodes[mk] = True
 
-                # Build MERGE for member node
-                if _is_file_scoped(member_label):
-                    member_merge = (
-                        f"MERGE (member:{member_label} "
-                        f"{{symbol: '{esc_member}', file_id: '{esc_fid}'}})"
-                    )
-                else:
-                    member_merge = (
-                        f"MERGE (member:{member_label} {{symbol: '{esc_member}'}})"
-                    )
+                records.append((file_id, ot, ol, mt, ml, rt, ln, mov))
 
-                cypher_stmt = (
-                    f"{owner_merge} "
-                    f"{member_merge} "
-                    f"CREATE (owner)-[:{relation_tag} {{"
-                    f"file_id: '{esc_fid}', "
-                    f"line: {line_no}, "
-                    f"member_order_value: {member_order_value}"
-                    f"}}]->(member)"
-                )
+    t_parse = _time.perf_counter()
 
-                sql = (
-                    f"SELECT * FROM cypher('{graph_name}', $${cypher_stmt}$$) "
-                    f"as t(v agtype)"
-                )
-                with conn.cursor() as cur:
-                    cur.execute(sql)
-                total_records += 1
+    # ── Phase 1: Bulk-INSERT unique nodes into AGE vertex tables ─
+    node_gids: dict[tuple, int] = {}  # (label, symbol, file_id|None) -> graphid
 
-        conn.commit()
+    for vlabel in ("root", "inner", "leaf_symbol", "leaf_literal"):
+        label_id = vlabel_ids.get(vlabel)
+        if label_id is None:
+            continue
+        nodes = [(sym, fid) for (l, sym, fid) in unique_nodes if l == vlabel]
+        if not nodes:
+            continue
 
-    print(f"Loaded {total_records} records into graph '{graph_name}' from {dataset_dir}")
+        seq = f'"{graph_name}"."{vlabel}_id_seq"'
+
+        # Build (props_json,) tuples for execute_values
+        props_data: list[tuple[str]] = []
+        node_keys: list[tuple] = []
+        for sym, fid in nodes:
+            if fid is not None:
+                props_data.append((json.dumps({"symbol": sym, "file_id": fid}),))
+            else:
+                props_data.append((json.dumps({"symbol": sym}),))
+            node_keys.append((vlabel, sym, fid))
+
+        with conn.cursor() as cur:
+            result = execute_values(
+                cur,
+                f'INSERT INTO "{graph_name}"."{vlabel}" (id, properties)'
+                f' VALUES %s RETURNING id',
+                props_data,
+                template=f"(ag_catalog._graphid({label_id},"
+                         f" nextval('{seq}')), %s::agtype)",
+                fetch=True,
+                page_size=10000,
+            )
+
+        # Map keys to graphids (returned in insertion order)
+        for idx, (gid,) in enumerate(result):
+            node_gids[node_keys[idx]] = gid
+
+    conn.commit()
+    t_nodes = _time.perf_counter()
+
+    # ── Phase 2: Bulk-INSERT edges into AGE edge tables ──────────
+    # Group edges by relation_tag (= edge label)
+    edges_by_label: dict[str, list[tuple]] = {}
+    for fid, ot, ol, mt, ml, rt, ln, mov in records:
+        ok = (ol, ot, fid if _is_file_scoped(ol) else None)
+        mk = (ml, mt, fid if _is_file_scoped(ml) else None)
+        start_gid = node_gids[ok]
+        end_gid = node_gids[mk]
+        props = json.dumps({
+            "file_id": fid, "line": ln, "member_order_value": mov,
+        })
+        edges_by_label.setdefault(rt, []).append((start_gid, end_gid, props))
+
+    for elabel, edge_data in edges_by_label.items():
+        label_id = elabel_ids.get(elabel)
+        if label_id is None:
+            continue
+        seq = f'"{graph_name}"."{elabel}_id_seq"'
+
+        with conn.cursor() as cur:
+            execute_values(
+                cur,
+                f'INSERT INTO "{graph_name}"."{elabel}"'
+                f' (id, start_id, end_id, properties) VALUES %s',
+                edge_data,
+                template=f"(ag_catalog._graphid({label_id},"
+                         f" nextval('{seq}')),"
+                         f" %s::graphid, %s::graphid, %s::agtype)",
+                page_size=10000,
+            )
+
+    conn.commit()
+    t_edges = _time.perf_counter()
+    total = t_edges - t0
+    print(
+        f"Loaded {len(records)} records into graph '{graph_name}' "
+        f"from {dataset_dir}\n"
+        f"  parse: {t_parse - t0:.2f}s | "
+        f"nodes ({len(unique_nodes)}): {t_nodes - t_parse:.2f}s | "
+        f"edges ({len(records)}): {t_edges - t_nodes:.2f}s | "
+        f"total: {total:.2f}s"
+    )
     return AstTagPostgresAgeDB(conn, graph_name)
 
 
