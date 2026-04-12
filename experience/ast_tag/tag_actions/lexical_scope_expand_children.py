@@ -28,11 +28,11 @@ def lexical_scope_expand_children(
     name = _db_type_name(ast_tag_db)
     if name == "AstTagSqliteDB":
         return sqlite_lexical_scope_expand_children(ast_tag_db, file_id, owner_tag)
-    if name == "AstTagPostgresAgeDB":
-        from experience.ast_tag.tag_actions.postgres_age_lexical_scope_expand_children import (
-            postgres_age_lexical_scope_expand_children,
+    if name == "AstTagPgAgeDB":
+        from experience.ast_tag.tag_actions.pg_age_lexical_scope_expand_children import (
+            pg_age_lexical_scope_expand_children,
         )
-        return postgres_age_lexical_scope_expand_children(ast_tag_db, file_id, owner_tag)
+        return pg_age_lexical_scope_expand_children(ast_tag_db, file_id, owner_tag)
     raise NotImplementedError(
         f"lexical_scope_expand_children not implemented for {name}"
     )

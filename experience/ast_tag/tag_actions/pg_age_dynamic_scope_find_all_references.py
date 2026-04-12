@@ -1,14 +1,14 @@
 """
-postgres_age_dynamic_scope_find_all_references :=
+pg_age_dynamic_scope_find_all_references :=
     list[$reference_site CodePosition]
-    <- $ast_tag_db AstTagPostgresAgeDB
+    <- $ast_tag_db AstTagPgAgeDB
     <- $symbol_name str
     # inline — PostgreSQL AGE graph implementation
 """
 
 from experience.ast_tag.tag_actions.code_position import CodePosition
-from experience.ast_tag.ast_tag_postgres_age_db import (
-    AstTagPostgresAgeDB,
+from experience.ast_tag.ast_tag_pg_age_db import (
+    AstTagPgAgeDB,
     _cypher_query,
     _escape_cypher_string,
     _agtype_to_str,
@@ -27,8 +27,8 @@ _RESULT_COLUMNS = [
 ]
 
 
-def postgres_age_dynamic_scope_find_all_references(
-    ast_tag_db: AstTagPostgresAgeDB, symbol_name: str
+def pg_age_dynamic_scope_find_all_references(
+    ast_tag_db: AstTagPgAgeDB, symbol_name: str
 ) -> list[CodePosition]:
     """Find All References: who uses/calls/references this symbol?
 

@@ -13,9 +13,9 @@ set -euo pipefail
 #   - Database exists: createdb ast_tag
 #
 # Example:
-#   AST_TAG_PG_CONN="host=localhost dbname=ast_tag user=postgres" ./test_postgres_tag_actions.sh
+#   AST_TAG_PG_CONN="host=localhost dbname=ast_tag user=postgres" ./test_pg_age_tag_actions.sh
 
-export AST_TAG_DB_BACKEND=postgres_age
+export AST_TAG_DB_BACKEND=pg_age
 export AST_TAG_PG_CONN="${AST_TAG_PG_CONN:-dbname=ast_tag}"
 export AST_TAG_PG_GRAPH="${AST_TAG_PG_GRAPH:-ast_tag}"
 

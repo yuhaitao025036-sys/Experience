@@ -1,15 +1,15 @@
 """
-postgres_age_lexical_scope_expand_children :=
+pg_age_lexical_scope_expand_children :=
     list[$child CodePosition]
-    <- $ast_tag_db AstTagPostgresAgeDB
+    <- $ast_tag_db AstTagPgAgeDB
     <- $file_id str
     <- $owner_tag str
     # inline — PostgreSQL AGE graph implementation
 """
 
 from experience.ast_tag.tag_actions.code_position import CodePosition
-from experience.ast_tag.ast_tag_postgres_age_db import (
-    AstTagPostgresAgeDB,
+from experience.ast_tag.ast_tag_pg_age_db import (
+    AstTagPgAgeDB,
     _cypher_query,
     _escape_cypher_string,
     _agtype_to_str,
@@ -28,8 +28,8 @@ _RESULT_COLUMNS = [
 ]
 
 
-def postgres_age_lexical_scope_expand_children(
-    ast_tag_db: AstTagPostgresAgeDB, file_id: str, owner_tag: str
+def pg_age_lexical_scope_expand_children(
+    ast_tag_db: AstTagPgAgeDB, file_id: str, owner_tag: str
 ) -> list[CodePosition]:
     """Expand Children: what symbols are lexically contained inside this node?
 

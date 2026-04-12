@@ -1,8 +1,8 @@
-postgres_age_dynamic_scope_find_all_references :=
+pg_age_dynamic_scope_find_all_references :=
     # Find All References: who uses/calls/references this symbol?
     # Graph query: find the leaf node for the symbol, traverse all incoming dynamic edges
     #
-    # e.g. postgres_age_dynamic_scope_find_all_references(db, "make_tensor") ->
+    # e.g. pg_age_dynamic_scope_find_all_references(db, "make_tensor") ->
     #   [(train.jsonl, 10, $Call_5, "Call__func", "make_tensor", 0),
     #    (test.jsonl, 3, $alias_2, "alias__name", "make_tensor", 0)]
     #
@@ -11,7 +11,7 @@ postgres_age_dynamic_scope_find_all_references :=
     #   all incoming edges to that vertex are the references. no full table scan needed.
     #   cross-file references are naturally captured by the graph topology.
     list[$reference_site Import[./code_position.viba].CodePosition]
-    <- $ast_tag_db Import[../ast_tag_postgres_age_db.viba].AstTagPostgresAgeDB
+    <- $ast_tag_db Import[../ast_tag_pg_age_db.viba].AstTagPgAgeDB
     <- $symbol_name str
     # inline
     <- Import[../relation_tag_classification.viba].DYNAMIC_RELATION_TAGS

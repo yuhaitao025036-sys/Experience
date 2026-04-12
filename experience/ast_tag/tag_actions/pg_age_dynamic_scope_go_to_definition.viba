@@ -1,8 +1,8 @@
-postgres_age_dynamic_scope_go_to_definition :=
+pg_age_dynamic_scope_go_to_definition :=
     # Go to Definition: where is this symbol defined?
     # Graph query: find the leaf node, traverse incoming definition edges
     #
-    # e.g. postgres_age_dynamic_scope_go_to_definition(db, "make_tensor") ->
+    # e.g. pg_age_dynamic_scope_go_to_definition(db, "make_tensor") ->
     #   [(tensor_util/make_tensor.jsonl, 1, $FunctionDef_0, "FunctionDef__name", "make_tensor", 0)]
     #
     # Graph advantage over SQL:
@@ -10,7 +10,7 @@ postgres_age_dynamic_scope_go_to_definition :=
     #   definition edges (FunctionDef__name, ClassDef__name, etc.) are a small subset
     #   of all incoming edges — graph index makes this O(degree) not O(table_size).
     list[$definition_site Import[./code_position.viba].CodePosition]
-    <- $ast_tag_db Import[../ast_tag_postgres_age_db.viba].AstTagPostgresAgeDB
+    <- $ast_tag_db Import[../ast_tag_pg_age_db.viba].AstTagPgAgeDB
     <- $symbol_name str
     # inline
     <- {

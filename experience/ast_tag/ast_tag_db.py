@@ -82,11 +82,11 @@ from experience.ast_tag.ast_tag_sqlite_db import (
 
 # Re-export AGE implementation (lazy — psycopg2 may not be installed)
 try:
-    from experience.ast_tag.ast_tag_postgres_age_db import (
-        AstTagPostgresAgeDB,
+    from experience.ast_tag.ast_tag_pg_age_db import (
+        AstTagPgAgeDB,
         classify_node_label,
         create_ast_tag_age_graph,
-        load_jsonl_dataset_into_ast_tag_age_db,
+        load_jsonl_dataset_into_pg_age_db,
     )
 except ImportError:
     pass
@@ -99,9 +99,9 @@ __all__ = [
     "AstTagSqliteDB",
     "create_ast_tag_sqlite_db_schema",
     "load_jsonl_dataset_into_ast_tag_sqlite_db",
-    "AstTagPostgresAgeDB",
+    "AstTagPgAgeDB",
     "classify_node_label",
     "create_ast_tag_age_graph",
-    "load_jsonl_dataset_into_ast_tag_age_db",
+    "load_jsonl_dataset_into_pg_age_db",
     "load_jsonl_dataset_into_ast_tag_db",
 ]

@@ -1,5 +1,5 @@
 """
-AstTagPostgresAgeDB — PostgreSQL + Apache AGE Implementation of AstTagDB
+AstTagPgAgeDB — PostgreSQL + Apache AGE Implementation of AstTagDB
 
 Uses Apache AGE graph extension for openCypher queries.
 Each relation_tag maps to an edge label in the graph.
@@ -119,10 +119,10 @@ def _escape_cypher_string(s: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════
-# AstTagPostgresAgeDB class
+# AstTagPgAgeDB class
 # ═══════════════════════════════════════════════════════════
 
-class AstTagPostgresAgeDB(AstTagDB):
+class AstTagPgAgeDB(AstTagDB):
     """PostgreSQL + Apache AGE implementation of AstTagDB interface."""
 
     def __init__(
@@ -131,7 +131,7 @@ class AstTagPostgresAgeDB(AstTagDB):
         """
         Wrap an existing psycopg2 connection with AGE extension loaded.
         Assumes graph already exists and is populated.
-        Use load_jsonl_dataset_into_ast_tag_age_db() to create a populated instance.
+        Use load_jsonl_dataset_into_pg_age_db() to create a populated instance.
         """
         self._conn = conn
         self._graph_name = graph_name
@@ -296,15 +296,15 @@ def _batch_cypher_exec(
         cur.execute(sql)
 
 
-def load_jsonl_dataset_into_ast_tag_age_db(
+def load_jsonl_dataset_into_pg_age_db(
     dataset_dir: str,
     conn_params: str = "dbname=ast_tag",
     graph_name: str = "ast_tag",
-) -> AstTagPostgresAgeDB:
+) -> AstTagPgAgeDB:
     """
     Walk dataset_dir, load all .jsonl files into the AGE graph.
     Direct SQL bulk-insert into AGE internal tables (bypasses Cypher).
-    Returns a ready-to-query AstTagPostgresAgeDB.
+    Returns a ready-to-query AstTagPgAgeDB.
     """
     import time as _time
     from psycopg2.extras import execute_values
@@ -462,7 +462,7 @@ def load_jsonl_dataset_into_ast_tag_age_db(
         f"edges ({len(records)}): {t_edges - t_nodes:.2f}s | "
         f"total: {total:.2f}s"
     )
-    return AstTagPostgresAgeDB(conn, graph_name)
+    return AstTagPgAgeDB(conn, graph_name)
 
 
 if __name__ == "__main__":
@@ -472,7 +472,7 @@ if __name__ == "__main__":
         os.path.dirname(__file__), "test_dataset"
     )
     conn_params = sys.argv[2] if len(sys.argv) > 2 else "dbname=ast_tag"
-    db = load_jsonl_dataset_into_ast_tag_age_db(dataset_dir, conn_params)
+    db = load_jsonl_dataset_into_pg_age_db(dataset_dir, conn_params)
     file_ids = db.get_all_loaded_file_ids()
     print(f"\n{len(file_ids)} files loaded:")
     for fid in file_ids:
@@ -480,4 +480,4 @@ if __name__ == "__main__":
         print(f"  {fid}: {count} records")
     total = sum(db.count_file_relation_records(fid) for fid in file_ids)
     print(f"\nTotal: {total} records across {len(file_ids)} files")
-    print("ast_tag_postgres_age_db: OK")
+    print("ast_tag_pg_age_db: OK")

@@ -95,10 +95,10 @@ pg_db = None
 try:
     conn_params = os.environ.get("AST_TAG_PG_CONN", "dbname=ast_tag")
     graph_name = os.environ.get("AST_TAG_PG_GRAPH", "ast_tag")
-    from ast_tag_postgres_age_db import load_jsonl_dataset_into_ast_tag_age_db
+    from ast_tag_pg_age_db import load_jsonl_dataset_into_pg_age_db
     print("\nLoading PostgreSQL AGE graph (one-time)...")
     load_start = time.perf_counter()
-    pg_db = load_jsonl_dataset_into_ast_tag_age_db(DATASET_DIR, conn_params, graph_name)
+    pg_db = load_jsonl_dataset_into_pg_age_db(DATASET_DIR, conn_params, graph_name)
     load_time = time.perf_counter() - load_start
     print(f"  Load time: {load_time:.2f}s")
 except ImportError:
@@ -106,7 +106,7 @@ except ImportError:
 
 if pg_db:
     print("\n=== PostgreSQL AGE (query only) ===")
-    pg_results = run_suite("postgres_age", pg_db)
+    pg_results = run_suite("pg_age", pg_db)
     for name, (n, t) in pg_results.items():
         print(f"  {name}: {n} calls in {t:.4f}s ({t/n*1000:.2f} ms/call)")
 

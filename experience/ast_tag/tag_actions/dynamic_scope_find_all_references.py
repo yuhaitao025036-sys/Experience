@@ -27,11 +27,11 @@ def dynamic_scope_find_all_references(
     name = _db_type_name(ast_tag_db)
     if name == "AstTagSqliteDB":
         return sqlite_dynamic_scope_find_all_references(ast_tag_db, symbol_name)
-    if name == "AstTagPostgresAgeDB":
-        from experience.ast_tag.tag_actions.postgres_age_dynamic_scope_find_all_references import (
-            postgres_age_dynamic_scope_find_all_references,
+    if name == "AstTagPgAgeDB":
+        from experience.ast_tag.tag_actions.pg_age_dynamic_scope_find_all_references import (
+            pg_age_dynamic_scope_find_all_references,
         )
-        return postgres_age_dynamic_scope_find_all_references(ast_tag_db, symbol_name)
+        return pg_age_dynamic_scope_find_all_references(ast_tag_db, symbol_name)
     raise NotImplementedError(
         f"dynamic_scope_find_all_references not implemented for {name}"
     )

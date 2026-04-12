@@ -19,11 +19,11 @@ def _db() -> AstTagDB:
     if not hasattr(_db, "_instance"):
         dataset_dir = os.path.join(os.path.dirname(__file__), "..", "test_dataset")
         backend = os.environ.get("AST_TAG_DB_BACKEND", "sqlite")
-        if backend == "postgres_age":
-            from ast_tag_postgres_age_db import load_jsonl_dataset_into_ast_tag_age_db
+        if backend == "pg_age":
+            from ast_tag_pg_age_db import load_jsonl_dataset_into_pg_age_db
             conn_params = os.environ.get("AST_TAG_PG_CONN", "dbname=ast_tag")
             graph_name = os.environ.get("AST_TAG_PG_GRAPH", "ast_tag")
-            _db._instance = load_jsonl_dataset_into_ast_tag_age_db(
+            _db._instance = load_jsonl_dataset_into_pg_age_db(
                 dataset_dir, conn_params, graph_name
             )
         else:

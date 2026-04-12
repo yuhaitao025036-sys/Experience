@@ -28,11 +28,11 @@ def dynamic_scope_go_to_definition(
     name = _db_type_name(ast_tag_db)
     if name == "AstTagSqliteDB":
         return sqlite_dynamic_scope_go_to_definition(ast_tag_db, symbol_name)
-    if name == "AstTagPostgresAgeDB":
-        from experience.ast_tag.tag_actions.postgres_age_dynamic_scope_go_to_definition import (
-            postgres_age_dynamic_scope_go_to_definition,
+    if name == "AstTagPgAgeDB":
+        from experience.ast_tag.tag_actions.pg_age_dynamic_scope_go_to_definition import (
+            pg_age_dynamic_scope_go_to_definition,
         )
-        return postgres_age_dynamic_scope_go_to_definition(ast_tag_db, symbol_name)
+        return pg_age_dynamic_scope_go_to_definition(ast_tag_db, symbol_name)
     raise NotImplementedError(
         f"dynamic_scope_go_to_definition not implemented for {name}"
     )
