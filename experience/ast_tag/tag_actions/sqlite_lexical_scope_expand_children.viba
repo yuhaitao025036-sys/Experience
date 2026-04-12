@@ -1,7 +1,7 @@
-lexical_scope_expand_children :=
+sqlite_lexical_scope_expand_children :=
     # Expand Children: what symbols are lexically contained inside this node?
     # follows LEXICAL_RELATION_TAGS from relation_tag_classification.viba
-    # e.g. lexical_scope_expand_children(db, "f.jsonl", "$FunctionDef_0") ->
+    # e.g. sqlite_lexical_scope_expand_children(db, "f.jsonl", "$FunctionDef_0") ->
     #   [(f.jsonl, 5, $FunctionDef_0, "FunctionDef__body", "$Assign_0", 0),
     #    (f.jsonl, 5, $FunctionDef_0, "FunctionDef__args", "$arguments_0", 0),
     #    (f.jsonl, 5, $FunctionDef_0, "FunctionDef__decorator_list", "staticmethod", 0)]
@@ -9,10 +9,10 @@ lexical_scope_expand_children :=
     <- $ast_tag_db Import[../ast_tag_db.viba].AstTagDB
     <- $file_id str
     <- $owner_tag str
-    # dispatch on ast_tag_db type
-    <- Import[./sqlite_lexical_scope_expand_children.viba]
-    <- {
-        if isinstance(ast_tag_db, AstTagSqliteDB):
-            return sqlite_lexical_scope_expand_children(ast_tag_db, file_id, owner_tag)
-        raise NotImplementedError(type(ast_tag_db))
-    }
+    # inline
+    <- Import[../relation_tag_classification.viba].LEXICAL_RELATION_TAGS
+    <- { SELECT file_id, line, owner_tag, relation_tag, member_tag, member_order_value
+         FROM relations
+         WHERE file_id = ? AND owner_tag = ?
+           AND relation_tag IN LEXICAL_RELATION_TAGS
+         ORDER BY member_order_value }

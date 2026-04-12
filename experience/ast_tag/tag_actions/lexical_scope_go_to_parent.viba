@@ -8,10 +8,10 @@ lexical_scope_go_to_parent :=
     <- $ast_tag_db Import[../ast_tag_db.viba].AstTagDB
     <- $file_id str
     <- $member_tag str
-    # inline
-    <- Import[../relation_tag_classification.viba].LEXICAL_RELATION_TAGS
-    <- { SELECT file_id, line, owner_tag, relation_tag, member_tag, member_order_value
-         FROM relations
-         WHERE file_id = ? AND member_tag = ?
-           AND relation_tag IN LEXICAL_RELATION_TAGS
-         LIMIT 1 }
+    # dispatch on ast_tag_db type
+    <- Import[./sqlite_lexical_scope_go_to_parent.viba]
+    <- {
+        if isinstance(ast_tag_db, AstTagSqliteDB):
+            return sqlite_lexical_scope_go_to_parent(ast_tag_db, file_id, member_tag)
+        raise NotImplementedError(type(ast_tag_db))
+    }

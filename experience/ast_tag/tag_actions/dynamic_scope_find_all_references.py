@@ -1,20 +1,17 @@
 """
 dynamic_scope_find_all_references :=
-    # Find All References: who uses/calls/references this symbol?
-    # searches ALL files for dynamic relations where member_tag == symbol_name
     list[$reference_site CodePosition]
     <- $ast_tag_db AstTagDB
     <- $symbol_name str
+    # dispatch on ast_tag_db type
 """
 
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from tag_actions.code_position import CodePosition
-from relation_tag_classification import DYNAMIC_RELATION_TAGS
-from ast_tag_db import AstTagDB
+from experience.ast_tag.tag_actions.code_position import CodePosition
+from experience.ast_tag.ast_tag_db import AstTagDB
+from experience.ast_tag.ast_tag_sqlite_db import AstTagSqliteDB
+from experience.ast_tag.tag_actions.sqlite_dynamic_scope_find_all_references import (
+    sqlite_dynamic_scope_find_all_references,
+)
 
 
 def dynamic_scope_find_all_references(
@@ -22,52 +19,21 @@ def dynamic_scope_find_all_references(
 ) -> list[CodePosition]:
     """Find All References: who uses/calls/references this symbol?
 
-    Searches ALL files for dynamic relations where member_tag == symbol_name.
+    Dispatches to the appropriate implementation based on ast_tag_db type.
     """
-    results: list[CodePosition] = []
-    seen: set[tuple[str, int, str]] = set()  # (file_id, line, owner_tag) dedup
-
-    # Direct reference lookup with DYNAMIC_RELATION_TAGS
-    placeholders = ",".join("?" for _ in DYNAMIC_RELATION_TAGS)
-    cursor = ast_tag_db._conn.execute(
-        f"""
-        SELECT file_id, line, owner_tag, relation_tag, member_tag, member_order_value
-        FROM relations
-        WHERE member_tag = ?
-          AND relation_tag IN ({placeholders})
-        """,
-        (symbol_name, *DYNAMIC_RELATION_TAGS),
+    if isinstance(ast_tag_db, AstTagSqliteDB):
+        return sqlite_dynamic_scope_find_all_references(ast_tag_db, symbol_name)
+    raise NotImplementedError(
+        f"dynamic_scope_find_all_references not implemented for {type(ast_tag_db).__name__}"
     )
-    for row in cursor.fetchall():
-        key = (row[0], row[1], row[2])
-        if key not in seen:
-            seen.add(key)
-            results.append(CodePosition(*row))
-
-    # Attribute references: Attribute.attr matches symbol_name
-    attr_cursor = ast_tag_db._conn.execute(
-        """
-        SELECT file_id, line, owner_tag, relation_tag, member_tag, member_order_value
-        FROM relations
-        WHERE relation_tag = 'Attribute__attr' AND member_tag = ?
-        """,
-        (symbol_name,),
-    )
-    for row in attr_cursor.fetchall():
-        key = (row[0], row[1], row[2])
-        if key not in seen:
-            seen.add(key)
-            results.append(CodePosition(*row))
-
-    return results
 
 
 if __name__ == "__main__":
-    from ast_tag_db import load_jsonl_dataset_into_ast_tag_db
+    import os
+    from experience.ast_tag.ast_tag_db import load_jsonl_dataset_into_ast_tag_db
 
     dataset_dir = os.path.join(os.path.dirname(__file__), "..", "test_dataset")
     db = load_jsonl_dataset_into_ast_tag_db(dataset_dir)
-    # pick some defined symbols
     rows = db.execute_raw_sql_query(
         "SELECT DISTINCT member_tag FROM relations WHERE relation_tag = 'FunctionDef__name' LIMIT 10"
     )

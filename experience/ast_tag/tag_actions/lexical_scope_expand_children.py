@@ -1,50 +1,41 @@
 """
 lexical_scope_expand_children :=
-    # Expand Children: what symbols are lexically contained inside this node?
     list[$child CodePosition]
     <- $ast_tag_db AstTagDB
     <- $file_id str
     <- $owner_tag str
-    # inline
-    <- LEXICAL_RELATION_TAGS
-    <- { SELECT ... WHERE file_id = ? AND owner_tag = ? AND relation_tag IN LEXICAL ORDER BY member_order_value }
+    # dispatch on ast_tag_db type
 """
 
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from tag_actions.code_position import CodePosition
-from relation_tag_classification import LEXICAL_RELATION_TAGS
-from ast_tag_db import AstTagDB
+from experience.ast_tag.tag_actions.code_position import CodePosition
+from experience.ast_tag.ast_tag_db import AstTagDB
+from experience.ast_tag.ast_tag_sqlite_db import AstTagSqliteDB
+from experience.ast_tag.tag_actions.sqlite_lexical_scope_expand_children import (
+    sqlite_lexical_scope_expand_children,
+)
 
 
 def lexical_scope_expand_children(
     ast_tag_db: AstTagDB, file_id: str, owner_tag: str
 ) -> list[CodePosition]:
-    """Expand Children: what symbols are lexically contained inside this node?"""
-    placeholders = ",".join("?" for _ in LEXICAL_RELATION_TAGS)
-    cursor = ast_tag_db._conn.execute(
-        f"""
-        SELECT file_id, line, owner_tag, relation_tag, member_tag, member_order_value
-        FROM relations
-        WHERE file_id = ? AND owner_tag = ?
-          AND relation_tag IN ({placeholders})
-        ORDER BY member_order_value
-        """,
-        (file_id, owner_tag, *LEXICAL_RELATION_TAGS),
+    """Expand Children: what symbols are lexically contained inside this node?
+
+    Dispatches to the appropriate implementation based on ast_tag_db type.
+    """
+    if isinstance(ast_tag_db, AstTagSqliteDB):
+        return sqlite_lexical_scope_expand_children(ast_tag_db, file_id, owner_tag)
+    raise NotImplementedError(
+        f"lexical_scope_expand_children not implemented for {type(ast_tag_db).__name__}"
     )
-    return [CodePosition(*row) for row in cursor.fetchall()]
 
 
 if __name__ == "__main__":
-    from ast_tag_db import load_jsonl_dataset_into_ast_tag_db
+    import os
+    from experience.ast_tag.ast_tag_db import load_jsonl_dataset_into_ast_tag_db
 
     dataset_dir = os.path.join(os.path.dirname(__file__), "..", "test_dataset")
     db = load_jsonl_dataset_into_ast_tag_db(dataset_dir)
     file_ids = db.get_all_loaded_file_ids()
-    # test on a few owners
     for fid in file_ids[:3]:
         rows = db.execute_raw_sql_query(
             "SELECT DISTINCT owner_tag FROM relations WHERE file_id = ? LIMIT 5",
