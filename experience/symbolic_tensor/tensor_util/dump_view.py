@@ -34,6 +34,10 @@ def dump_view(tensor: torch.Tensor, dump_dir: str, extension: str) -> None:
     """
     coordinates_list = _get_coordinates(tensor.size())
 
+    # Normalize paths to handle macOS /var -> /private/var symlink issues
+    # This ensures relative paths work correctly across symlinked directories
+    normalized_relative_to = os.path.realpath(tensor.st_relative_to)
+
     for coordinates in coordinates_list:
         # Compute flat storage index from coordinates and stride
         flat_index = _flat_index_from_coordinates(coordinates, tensor.stride())
@@ -41,7 +45,7 @@ def dump_view(tensor: torch.Tensor, dump_dir: str, extension: str) -> None:
         # Source file path: {relative_to}/{uid}/storage/{digit_dirs}/data
         src_index_digits = _str_to_digit_list(str(flat_index))
         src_file_path = os.path.join(
-            tensor.st_relative_to,
+            normalized_relative_to,
             tensor.st_tensor_uid,
             "storage",
             os.path.join(*src_index_digits),
@@ -59,8 +63,11 @@ def dump_view(tensor: torch.Tensor, dump_dir: str, extension: str) -> None:
         # Create parent directories for destination
         os.makedirs(os.path.dirname(dst_file_path), exist_ok=True)
 
+        # Normalize destination path as well for consistent relative path calculation
+        dst_dir_real = os.path.realpath(os.path.dirname(dst_file_path))
+
         # Create relative symlink from dst to src
-        rel_src = os.path.relpath(src_file_path, os.path.dirname(dst_file_path))
+        rel_src = os.path.relpath(src_file_path, dst_dir_real)
         os.symlink(rel_src, dst_file_path)
 
 

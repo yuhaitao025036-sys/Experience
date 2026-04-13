@@ -29,6 +29,9 @@ async def raw_llm_query(prompt: str, llm_env: Optional[Dict[str, str]] = None):
             ],
             stream=False
         )
+        # Handle different response formats
+        if isinstance(response, str):
+            return response
         return response.choices[0].message.content
     finally:
         await client.close()
