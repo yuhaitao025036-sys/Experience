@@ -41,10 +41,8 @@ def _strip_think_tags(content: str) -> str:
 async def raw_llm_query(prompt: str, llm_env: Optional[Dict[str, str]] = None):
     env = llm_env if llm_env is not None else DEFAULT_LLM_ENV
 
-    # Get base_url and ensure it ends with /v1
+    # Get base_url directly (user should provide full path like https://xxx/v1)
     base_url = env.get('LLM_BASE_URL') or os.environ.get('LLM_BASE_URL')
-    if base_url and not base_url.endswith('/v1'):
-        base_url = base_url.rstrip('/') + '/v1'
 
     # 每次调用创建客户端，避免跨 asyncio.run() 复用已关闭的连接池
     client = AsyncOpenAI(
