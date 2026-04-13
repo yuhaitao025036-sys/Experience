@@ -15,7 +15,7 @@ python experience/example/code_auto_encoder/test_baseline.py \
     --llm-method raw_llm_api \
     --num-iterations 1 \
     --total-batch-size 1 \
-    --dataset-cache-dir ./my_experiment \
+    --experiment-dir ./my_experiment \
     --seed 42
 ```
 
@@ -28,7 +28,7 @@ python experience/example/code_auto_encoder/test_baseline.py \
     --llm-method coding_agent \
     --num-iterations 1 \
     --total-batch-size 1 \
-    --dataset-cache-dir ./my_experiment \
+    --experiment-dir ./my_experiment \
     --seed 42
 ```
 
@@ -40,8 +40,8 @@ Runs ducc via tmux with visual observation support:
 python experience/example/code_auto_encoder/test_baseline.py \
     --llm-method tmux_cc \
     --interactive \
-    --tmux-session manual_tmux_cc \
-    --experiment-dir my_experiment \
+    --tmux-session manual_ducc \
+    --experiment-dir ./my_experiment \
     --seed 42
 ```
 
@@ -233,7 +233,9 @@ Direct LLM API calls, suitable for quick testing. All files are merged and sent 
 
 ```bash
 python experience/example/code_auto_encoder/test_baseline.py \
-    --llm-method raw_llm_api
+    --llm-method raw_llm_api \
+    --experiment-dir ./my_experiment \
+    --seed 42
 ```
 
 ### 2. coding_agent
@@ -242,7 +244,9 @@ Uses coding agent mode. The LLM receives the files separately and can read/write
 
 ```bash
 python experience/example/code_auto_encoder/test_baseline.py \
-    --llm-method coding_agent
+    --llm-method coding_agent \
+    --experiment-dir ./my_experiment \
+    --seed 42
 ```
 
 ### 3. tmux_cc
@@ -255,7 +259,9 @@ Runs tmux_cc via subprocess, no visual interface.
 
 ```bash
 python experience/example/code_auto_encoder/test_baseline.py \
-    --llm-method tmux_cc
+    --llm-method tmux_cc \
+    --experiment-dir ./my_experiment \
+    --seed 42
 ```
 
 #### Interactive Mode (tmux visualization)
@@ -265,7 +271,9 @@ Runs tmux_cc in a tmux session for real-time agent observation.
 ```bash
 python experience/example/code_auto_encoder/test_baseline.py \
     --llm-method tmux_cc \
-    --interactive
+    --interactive \
+    --experiment-dir ./my_experiment \
+    --seed 42
 ```
 
 ## Interactive Mode Details
@@ -320,7 +328,8 @@ python experience/example/code_auto_encoder/test_baseline.py \
     --num-iterations 1 \
     --total-batch-size 2 \
     --llm-method tmux_cc \
-    --interactive
+    --interactive \
+    --experiment-dir ./my_experiment
 ```
 
 ### Observe tmux_cc Execution
@@ -381,7 +390,8 @@ To manually control each tmux_cc confirmation step:
 python experience/example/code_auto_encoder/test_baseline.py \
     --llm-method tmux_cc \
     --interactive \
-    --no-auto-confirm
+    --no-auto-confirm \
+    --experiment-dir ./my_experiment
 ```
 
 Then attach to tmux in another terminal for manual operation.
@@ -392,10 +402,11 @@ Then attach to tmux in another terminal for manual operation.
 python experience/example/code_auto_encoder/test_baseline.py \
     --llm-method tmux_cc \
     --interactive \
-    --tmux-session my_tmux_cc_session
+    --tmux-session my_ducc_session \
+    --experiment-dir ./my_experiment
 ```
 
-Then use `tmux attach -t my_tmux_cc_session` to connect.
+Then use `tmux attach -t my_ducc_session` to connect.
 
 ## Complete Examples
 
@@ -405,34 +416,40 @@ Then use `tmux attach -t my_tmux_cc_session` to connect.
 python experience/example/code_auto_encoder/test_baseline.py \
     --total-batch-size 2 \
     --num-iterations 1 \
-    --llm-method raw_llm_api
+    --llm-method raw_llm_api \
+    --experiment-dir ./quick_test
 ```
 
 ### Example 2: Model Comparison with Fixed Dataset
 
-Use `--dataset-cache-dir` and `--seed` to ensure different models use the same input data:
+Use `--experiment-dir` and `--seed` to ensure different models use the same input data:
 
 ```bash
 # Model A: Generate and cache dataset
 python experience/example/code_auto_encoder/test_baseline.py \
     --total-batch-size 16 \
     --llm-method raw_llm_api \
-    --dataset-cache-dir ./my_experiment \
+    --experiment-dir ./comparison_exp \
     --seed 42
 
 # Model B: Use the same cached dataset
 python experience/example/code_auto_encoder/test_baseline.py \
     --total-batch-size 16 \
     --llm-method tmux_cc \
-    --dataset-cache-dir ./my_experiment \
+    --experiment-dir ./comparison_exp \
     --seed 42
 
 # Model C: Use the same cached dataset
 python experience/example/code_auto_encoder/test_baseline.py \
     --total-batch-size 16 \
     --llm-method coding_agent \
-    --dataset-cache-dir ./my_experiment \
+    --experiment-dir ./comparison_exp \
     --seed 42
+
+# Results organized by method:
+# comparison_exp/runs/raw_llm_api/run_.../
+# comparison_exp/runs/tmux_cc/run_.../
+# comparison_exp/runs/coding_agent/run_.../
 ```
 
 ### Example 3: Incremental Dataset Expansion
@@ -442,14 +459,14 @@ python experience/example/code_auto_encoder/test_baseline.py \
 python experience/example/code_auto_encoder/test_baseline.py \
     --total-batch-size 5 \
     --llm-method raw_llm_api \
-    --dataset-cache-dir ./my_experiment \
+    --experiment-dir ./my_experiment \
     --seed 42
 
 # Expand to larger batch (reuses first 5 samples)
 python experience/example/code_auto_encoder/test_baseline.py \
     --total-batch-size 50 \
     --llm-method raw_llm_api \
-    --dataset-cache-dir ./my_experiment \
+    --experiment-dir ./my_experiment \
     --seed 42
 # Output: Cache has 5 samples, need 50, will generate more
 ```
@@ -461,28 +478,14 @@ python experience/example/code_auto_encoder/test_baseline.py \
 python experience/example/code_auto_encoder/test_baseline.py \
     --total-batch-size 2 \
     --llm-method tmux_cc \
-    --interactive
+    --interactive \
+    --experiment-dir ./debug_run
 
 # Terminal 2: Observe tmux_cc execution
 tmux attach -t tmux_cc_interactive_0_0
 ```
 
-### Example 5: With Experiment Directory and Seed
-
-```bash
-python experience/example/code_auto_encoder/test_baseline.py \
-    --total-batch-size 16 \
-    --num-iterations 1 \
-    --llm-method coding_agent \
-    --experiment-dir my_experiment \
-    --seed 42
-```
-
-Results will be saved to:
-- `my_experiment/runs/coding_agent/run_YYYYMMDD_HHMMSS/`
-- Each task's prediction and ground truth in `output/{index}/`
-
-### Example 6: Manual tmux_cc Control (auto-confirm disabled)
+### Example 5: Manual tmux_cc Control (auto-confirm disabled)
 
 ```bash
 # Terminal 1: Start test
@@ -490,30 +493,12 @@ python experience/example/code_auto_encoder/test_baseline.py \
     --llm-method tmux_cc \
     --interactive \
     --no-auto-confirm \
-    --tmux-session manual_tmux_cc
+    --tmux-session manual_ducc \
+    --experiment-dir ./manual_test
 
 # Terminal 2: Manual operation
-tmux attach -t manual_tmux_cc
+tmux attach -t manual_ducc
 # Manually handle all confirmation prompts in tmux
-```
-
-### Example 5: Compare Different Methods
-
-```bash
-# Run same dataset with different methods for comparison
-python experience/example/code_auto_encoder/test_baseline.py \
-    --llm-method raw_llm_api \
-    --experiment-dir comparison_exp \
-    --seed 42
-
-python experience/example/code_auto_encoder/test_baseline.py \
-    --llm-method coding_agent \
-    --experiment-dir comparison_exp \
-    --seed 42
-
-# Results organized by method:
-# comparison_exp/runs/raw_llm_api/run_.../
-# comparison_exp/runs/coding_agent/run_.../
 ```
 
 ## Python API Usage
@@ -525,8 +510,9 @@ from experience.example.code_auto_encoder.test_baseline import test_baseline
 test_baseline(
     total_batch_size=16,
     num_iterations=1,
-    llm_method="tmux_cc",
-    interactive=False,
+    llm_method="raw_llm_api",
+    seed=42,
+    experiment_dir="./my_experiment",
 )
 
 # Interactive mode
@@ -537,16 +523,8 @@ test_baseline(
     interactive=True,
     auto_confirm=True,
     tmux_session="my_session",
-)
-
-# With experiment directory for organized results
-test_baseline(
-    total_batch_size=16,
-    num_iterations=1,
-    llm_method="coding_agent",
     seed=42,
-    experiment_dir="my_experiment",
-)
+    experiment_dir="./my_experiment",
 )
 ```
 
@@ -641,5 +619,4 @@ python test_baseline.py --seed 42 --experiment-dir exp1
 python test_baseline.py --seed 42 --experiment-dir exp2
 
 # Dataset will be cached in experiment_dir/dataset/seed_42/
-```
 ```
