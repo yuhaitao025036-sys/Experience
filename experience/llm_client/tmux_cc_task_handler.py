@@ -480,6 +480,11 @@ class TmuxCcTaskHandler:
                         "--permission-mode", "bypassPermissions",
                         "--effort", "low",  # Use low effort for faster response
                     ]
+                    
+                    # Add model parameter if specified via environment variable
+                    model = os.environ.get("ANTHROPIC_MODEL")
+                    if model:
+                        cmd.extend(["--model", model])
 
                     result = subprocess.run(
                         cmd,
@@ -559,6 +564,10 @@ class TmuxCcTaskHandler:
                     # IS_SANDBOX=1 skips some prompts, --permission-mode bypassPermissions skips permission checks
                     # --effort low for faster response (avoid extended thinking)
                     tmux_cc_cmd = f'IS_SANDBOX=1 {TMUX_CC_BIN} --permission-mode bypassPermissions --allowedTools "Read,Edit,Write" --effort low'
+                    # Add model parameter if specified via environment variable
+                    model = os.environ.get("ANTHROPIC_MODEL")
+                    if model:
+                        tmux_cc_cmd += f' --model "{model}"'
                     _tmux_send_keys(session_name, tmux_cc_cmd, "Enter")
 
                     # Step 2: Wait for tmux_cc to start and show trust prompt

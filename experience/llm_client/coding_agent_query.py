@@ -46,6 +46,7 @@ async def coding_agent_query(
     allowed_tools: list[str] = None,
     permission_mode: str = "acceptEdits",
     llm_env: Optional[Dict[str, str]] = None,
+    model: str = None,
 ):
     if allowed_tools is None:
         allowed_tools = ["Read", "Edit"]
@@ -58,17 +59,24 @@ async def coding_agent_query(
     # Find ducc CLI and settings
     cli_path = _find_ducc_cli_path()
     settings_path = _find_ducc_settings_path()
+    
+    # Get model from parameter or environment variable
+    if model is None:
+        model = os.environ.get("ANTHROPIC_MODEL")
 
     try:
+        options = ClaudeAgentOptions(
+            allowed_tools=allowed_tools,
+            permission_mode=permission_mode,
+            cwd=cwd,
+            cli_path=cli_path,
+            settings=settings_path,
+        )
+        if model:
+            options.model = model
         async for item in query(
             prompt=prompt,
-            options=ClaudeAgentOptions(
-                allowed_tools=allowed_tools,
-                permission_mode=permission_mode,
-                cwd=cwd,
-                cli_path=cli_path,
-                settings=settings_path,
-            ),
+            options=options,
         ):
             # print(item, file=sys.stderr)
             yield item
