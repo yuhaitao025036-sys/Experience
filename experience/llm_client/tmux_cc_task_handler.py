@@ -562,6 +562,10 @@ class TmuxCcTaskHandler:
                     if base_url and is_internal_api:
                         # Internal API (comate): patch settings.json to change base_url
                         settings_backup = _patch_settings_json(base_url=base_url, model=model)
+                    elif base_url and not is_internal_api:
+                        # External API (e.g., Qianfan): patch settings.json to replace
+                        # comate auth with qianfan api_key
+                        settings_backup = _patch_settings_json(base_url=base_url, api_key=api_key, model=model)
 
                     cmd = [
                         TMUX_CC_BIN,
@@ -570,10 +574,10 @@ class TmuxCcTaskHandler:
                         "--permission-mode", "bypassPermissions",
                         "--effort", "low",
                     ]
-                    
+
                     if model:
                         cmd.extend(["--model", model])
-                    
+
                     # For external API: disable settings.json, use env vars
                     if base_url and not is_internal_api:
                         cmd.extend(["--setting-sources", "", "--settings", "{}"])
@@ -582,6 +586,7 @@ class TmuxCcTaskHandler:
                     run_env = os.environ.copy()
                     if base_url and not is_internal_api:
                         run_env.pop("ANTHROPIC_AUTH_TOKEN", None)
+                        run_env.pop("ANTHROPIC_CUSTOM_HEADERS", None)
 
                     result = subprocess.run(
                         cmd,
@@ -674,9 +679,10 @@ class TmuxCcTaskHandler:
                     settings_backup = None
                     
                     if base_url and not is_internal_api:
-                        # External API (e.g., Qianfan): must use env vars + disable settings.json
-                        # settings.json's ANTHROPIC_API_KEY is ignored by ducc, only env vars work
-                        tmux_cc_cmd = f'env -u ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL="{base_url}" ANTHROPIC_API_KEY="{api_key}" {TMUX_CC_BIN} --permission-mode bypassPermissions --allowedTools "Read,Edit,Write" --effort low --setting-sources "" --settings "{{}}"'
+                        # External API (e.g., Qianfan): patch settings.json to replace
+                        # comate auth with qianfan api_key, then use env vars to override
+                        settings_backup = _patch_settings_json(base_url=base_url, api_key=api_key, model=model)
+                        tmux_cc_cmd = f'env -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_CUSTOM_HEADERS ANTHROPIC_BASE_URL="{base_url}" ANTHROPIC_API_KEY="{api_key}" {TMUX_CC_BIN} --permission-mode bypassPermissions --allowedTools "Read,Edit,Write" --effort low --setting-sources "" --settings "{{}}"'
                     elif base_url and is_internal_api:
                         # Internal API (comate): patch settings.json to change base_url, keep token auth
                         settings_backup = _patch_settings_json(base_url=base_url, model=model)
