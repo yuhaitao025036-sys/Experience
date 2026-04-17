@@ -1,0 +1,20 @@
+
+RawLlmConfig := Import[experience/llm_client/agent_config.viba]
+AgentConfigFactory := Import[experience/llm_client/agent_config_factory.viba]
+
+raw_llm_query :=
+    # Query OpenAI-compatible LLM API with given prompt
+    # Uses RawLlmConfig for configuration management
+    async str
+    <- $prompt str # Task prompt for the LLM
+    <- $config RawLlmConfig # Optional, if None uses AgentConfigFactory.create_raw_llm_config()
+    # inline
+    <- $effective_config { use provided config or create via AgentConfigFactory }
+    <- $base_url { config.base_url }
+    <- $api_key { config.api_key }
+    <- $model { config.model }
+    <- $custom_headers { build from config.username if present }
+    <- { import AsyncOpenAI from openai }
+    <- $client { AsyncOpenAI(base_url, api_key, default_headers) }
+    <- $completion { await client.chat.completions.create(model, messages, ...) }
+    <- { return completion.choices[0].message.content }

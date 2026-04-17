@@ -1,0 +1,24 @@
+
+TmuxCcConfig := Import[experience/llm_client/agent_config.viba]
+AgentConfigFactory := Import[experience/llm_client/agent_config_factory.viba]
+
+tmux_cc_query :=
+    # Synchronous query interface for tmux_cc method
+    # Provides simple blocking call that returns result as string
+    str
+    <- $prompt str # Task prompt for the agent
+    <- $cwd str # Optional, working directory
+    <- $config TmuxCcConfig # Optional, pre-configured TmuxCcConfig
+    <- $workspace_root str # Optional, workspace root directory
+    <- $llm_env dict[str, str] # Optional, environment variables
+    # inline
+    <- $effective_config { use provided config or create via AgentConfigFactory }
+    <- $cli_path { config.get_cli_path() }
+    <- $settings_path { config.get_settings_path() }
+    <- $workspace { create temporary workspace directory }
+    <- $prompt_file { write prompt to workspace/input/prompt.txt }
+    <- { patch settings.json if using external API (Qianfan) }
+    <- $command { build tmux_cc command with cli_path and workspace }
+    <- $result { run command and capture stdout }
+    <- { restore settings.json from backup }
+    <- { return result string }

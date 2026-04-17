@@ -1,0 +1,22 @@
+
+AgentConfig := Import[experience/llm_client/agent_config.viba]
+AgentConfigFactory := Import[experience/llm_client/agent_config_factory.viba]
+
+coding_agent_query :=
+    # Query coding agent with given prompt
+    # Completely decoupled from implementation details via AgentConfig abstraction
+    async Generator[str]
+    <- $prompt str # Task prompt for the agent
+    <- $cwd str # Optional, working directory for the agent
+    <- $allowed_tools list[str] # Optional, list of allowed tools (default: ["Read", "Edit"])
+    <- $permission_mode str # Optional, permission mode (default: "acceptEdits")
+    <- $llm_env dict[str, str] # Optional, environment variables to set
+    <- $model str # Optional, model name override
+    <- $agent_config AgentConfig # Optional, pre-configured AgentConfig
+    # inline
+    <- { backup environment variables if llm_env provided }
+    <- $effective_config { use agent_config or create via AgentConfigFactory }
+    <- $options_dict { config.to_options() for polymorphic ClaudeAgentOptions }
+    <- { import query from claude_agent_sdk }
+    <- { async for item in query(prompt, options): yield item }
+    <- { restore environment variables }
