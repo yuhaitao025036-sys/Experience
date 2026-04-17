@@ -1,4 +1,4 @@
-import glob
+import json
 import os
 import shutil
 import subprocess
@@ -8,38 +8,132 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from experience.llm_client.agent_task import AgentTask
+from experience.llm_client.agent_config import TmuxCcConfig
+from experience.llm_client.agent_config_factory import AgentConfigFactory
+from experience.llm_client.agent_binary_provider import AgentBinaryProvider, get_default_provider
 from experience.fs_util.pack_dir import pack_dir
 
 
-def _find_tmux_cc_bin() -> str:
-    """Find tmux_cc (ducc) binary in order of priority:
-    1. TMUX_CC_BIN environment variable
-    2. ducc in PATH
-    3. glob pattern matching ~/.comate/extensions/baidu.baidu-cc-*/...
+def _find_tmux_cc_bin(agent_provider: Optional[AgentBinaryProvider] = None) -> str:
+    """Find tmux_cc (agent) binary using the provided or default AgentBinaryProvider.
+    
+    Args:
+        agent_provider: Optional AgentBinaryProvider instance. If None, uses default provider.
+    
+    Returns:
+        Path to agent binary.
+    
+    Raises:
+        FileNotFoundError: If agent binary cannot be found.
     """
-    # 1. Check environment variable
-    if env_bin := os.environ.get("TMUX_CC_BIN"):
-        return env_bin
+    if agent_provider is None:
+        agent_provider = get_default_provider()
+    
+    cli_path = agent_provider.get_cli_path()
+    if cli_path is None:
+        raise FileNotFoundError(
+            "Cannot find tmux_cc (agent) binary. Please either:\n"
+            "  1. Set TMUX_CC_BIN environment variable\n"
+            "  2. Install baidu-cc extension in ~/.comate/extensions/\n"
+            "  3. Add agent binary to your PATH\n"
+            "  4. Provide a custom AgentBinaryProvider"
+        )
+    return cli_path
 
-    # 2. Check PATH
-    if path_bin := shutil.which("ducc"):
-        return path_bin
 
-    # 3. Glob pattern for comate extension
-    pattern = os.path.expanduser(
-        "~/.comate/extensions/baidu.baidu-cc-*/resources/native-binary/bin/ducc"
-    )
-    matches = sorted(glob.glob(pattern), reverse=True)  # Sort descending to get latest version
-    if matches:
-        return matches[0]
+def _find_settings_json(agent_provider: Optional[AgentBinaryProvider] = None) -> Optional[str]:
+    """Find the agent settings.json file using the provided or default AgentBinaryProvider.
+    
+    Args:
+        agent_provider: Optional AgentBinaryProvider instance. If None, uses default provider.
+    
+    Returns:
+        Path to settings.json, or None if not found.
+    """
+    if agent_provider is None:
+        agent_provider = get_default_provider()
+    
+    return agent_provider.get_settings_path()
 
-    # Fallback: raise error with helpful message
-    raise FileNotFoundError(
-        "Cannot find tmux_cc (ducc) binary. Please either:\n"
-        "  1. Set TMUX_CC_BIN environment variable\n"
-        "  2. Add ducc to your PATH\n"
-        "  3. Install baidu-cc extension in ~/.comate/extensions/"
-    )
+
+def _ensure_settings_json_clean(settings_path: Optional[str]) -> None:
+    """Restore settings.json from backup file if previous run left it dirty.
+    
+    Args:
+        settings_path: Path to settings.json file.
+    """
+    if not settings_path:
+        return
+    backup_path = settings_path + ".experience_backup"
+    if os.path.exists(backup_path):
+        shutil.copy2(backup_path, settings_path)
+        os.remove(backup_path)
+        print(f"[DEBUG] Restored dirty settings.json from backup", file=sys.stderr)
+
+
+def _patch_settings_json(
+    settings_path: Optional[str],
+    base_url: str = None,
+    api_key: str = None,
+    model: str = None,
+) -> Optional[dict]:
+    """Patch settings.json with experience.json config. Returns backup info for restore.
+    
+    For internal API (comate): only override base_url, keep token
+    For external API (qianfan): override base_url and replace token with api_key
+    
+    Args:
+        settings_path: Path to settings.json file.
+        base_url: Base URL for the API.
+        api_key: API key for external APIs.
+        model: Model name.
+    """
+    if not settings_path:
+        return None
+    
+    # Save backup to disk (crash-safe)
+    backup_path = settings_path + ".experience_backup"
+    shutil.copy2(settings_path, backup_path)
+    
+    with open(settings_path, "r") as f:
+        original = json.load(f)
+    
+    patched = json.loads(json.dumps(original))  # deep copy
+    
+    is_internal = base_url and ("comate" in base_url or "baidu-int" in base_url)
+    
+    if base_url:
+        patched["env"]["ANTHROPIC_BASE_URL"] = base_url
+    
+    if not is_internal and api_key:
+        # External API: replace token with api_key
+        patched["env"].pop("ANTHROPIC_AUTH_TOKEN", None)
+        patched["env"].pop("ANTHROPIC_CUSTOM_HEADERS", None)
+        patched["env"]["ANTHROPIC_API_KEY"] = api_key
+    
+    if model:
+        patched["env"]["ANTHROPIC_MODEL"] = model
+        patched["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"] = model
+        patched["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = model
+        patched["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"] = model
+    
+    with open(settings_path, "w") as f:
+        json.dump(patched, f, indent=2)
+    
+    print(f"[DEBUG] Patched settings.json: base_url={base_url}, model={model}, is_internal={is_internal}", file=sys.stderr)
+    return {"path": settings_path, "backup_path": backup_path}
+
+
+def _restore_settings_json(backup: dict) -> None:
+    """Restore settings.json from backup."""
+    if not backup:
+        return
+    backup_path = backup.get("backup_path")
+    settings_path = backup.get("path")
+    if backup_path and os.path.exists(backup_path):
+        shutil.copy2(backup_path, settings_path)
+        os.remove(backup_path)
+        print(f"[DEBUG] Restored settings.json", file=sys.stderr)
 
 
 def _get_workspace_root() -> str:
@@ -53,7 +147,7 @@ def _get_workspace_root() -> str:
     return os.environ.get("TMUX_CC_WORKSPACE_ROOT", default_root)
 
 
-TMUX_CC_BIN = _find_tmux_cc_bin()
+# Workspace root for tmux_cc tasks
 TMUX_CC_WORKSPACE_ROOT = _get_workspace_root()
 
 # Default configuration for tmux interactive mode
@@ -405,7 +499,20 @@ class TmuxCcTaskHandler:
 
     Note: Output is handled by coding_agent.py via _copy_back_to_storage_view,
     not by this handler directly.
+    
+    Args:
+        config: Optional TmuxCcConfig. If None, creates default config.
     """
+
+    def __init__(self, config: Optional[TmuxCcConfig] = None):
+        if config is None:
+            config = AgentConfigFactory.create_tmux_cc_config()
+        self.config = config
+        self.tmux_cc_bin = config.get_cli_path()
+        if self.tmux_cc_bin is None:
+            raise FileNotFoundError(
+                "Cannot find tmux_cc (ducc) binary. Please configure properly."
+            )
 
     def __call__(
         self,
@@ -425,7 +532,11 @@ class TmuxCcTaskHandler:
             tmux_session: Custom tmux session name (interactive mode only)
         """
         # Ensure workspace root exists
-        os.makedirs(TMUX_CC_WORKSPACE_ROOT, exist_ok=True)
+        workspace_root = self.config.workspace_root or os.path.expanduser("~/.tmux_cc_tmp")
+        os.makedirs(workspace_root, exist_ok=True)
+        
+        # Restore settings.json if previous run left it dirty (crash recovery)
+        _ensure_settings_json_clean(self.config.get_settings_path())
 
         if interactive:
             self._run_interactive(all_tasks, llm_env, auto_confirm, tmux_session)
@@ -472,21 +583,62 @@ class TmuxCcTaskHandler:
 
                     print(f"\n[tmux_cc] Task {task_idx + 1}/{len(flat_tasks)}: {todo_file_path}", file=sys.stderr)
                     print(f"[tmux_cc] Workspace: {task_workspace}", file=sys.stderr)
+                    
+                    model = os.environ.get("ANTHROPIC_MODEL")
+                    base_url = os.environ.get("ANTHROPIC_BASE_URL")
+                    api_key = os.environ.get("ANTHROPIC_API_KEY")
+                    
+                    is_internal_api = base_url and ("comate" in base_url or "baidu-int" in base_url)
+                    settings_backup = None
+                    
+                    if base_url and is_internal_api:
+                        # Internal API (comate): patch settings.json to change base_url
+                        settings_backup = _patch_settings_json(
+                            settings_path=self.config.get_settings_path(),
+                            base_url=base_url,
+                            model=model
+                        )
+                    elif base_url and not is_internal_api:
+                        # External API (e.g., Qianfan): patch settings.json to replace
+                        # comate auth with qianfan api_key
+                        settings_backup = _patch_settings_json(
+                            settings_path=self.config.get_settings_path(),
+                            base_url=base_url,
+                            api_key=api_key,
+                            model=model
+                        )
 
                     cmd = [
-                        TMUX_CC_BIN,
+                        self.tmux_cc_bin,
                         "-p", ducc_prompt,
                         "--allowedTools", "Read,Edit,Write",
                         "--permission-mode", "bypassPermissions",
-                        "--effort", "low",  # Use low effort for faster response
+                        "--effort", "low",
                     ]
+
+                    if model:
+                        cmd.extend(["--model", model])
+
+                    # For external API: disable settings.json, use env vars
+                    if base_url and not is_internal_api:
+                        cmd.extend(["--setting-sources", "", "--settings", "{}"])
+                    
+                    # Prepare environment
+                    run_env = os.environ.copy()
+                    if base_url and not is_internal_api:
+                        run_env.pop("ANTHROPIC_AUTH_TOKEN", None)
+                        run_env.pop("ANTHROPIC_CUSTOM_HEADERS", None)
 
                     result = subprocess.run(
                         cmd,
                         cwd=task_workspace,
                         capture_output=True,
                         text=True,
+                        env=run_env,
                     )
+                    
+                    # Restore settings.json after ducc completes
+                    _restore_settings_json(settings_backup)
 
                     if result.returncode != 0:
                         print(f"[tmux_cc] stderr: {result.stderr}", file=sys.stderr)
@@ -558,7 +710,40 @@ class TmuxCcTaskHandler:
                     # Step 1: Start tmux_cc with reduced interactions
                     # IS_SANDBOX=1 skips some prompts, --permission-mode bypassPermissions skips permission checks
                     # --effort low for faster response (avoid extended thinking)
-                    tmux_cc_cmd = f'IS_SANDBOX=1 {TMUX_CC_BIN} --permission-mode bypassPermissions --allowedTools "Read,Edit,Write" --effort low'
+                    
+                    # Get config from environment (set by setup_env_for_method from ~/.experience.json)
+                    model = os.environ.get("ANTHROPIC_MODEL")
+                    base_url = os.environ.get("ANTHROPIC_BASE_URL")
+                    api_key = os.environ.get("ANTHROPIC_API_KEY")
+                    
+                    is_internal_api = base_url and ("comate" in base_url or "baidu-int" in base_url)
+                    settings_backup = None
+                    
+                    if base_url and not is_internal_api:
+                        # External API (e.g., Qianfan): patch settings.json to replace
+                        # comate auth with qianfan api_key, then use env vars to override
+                        settings_backup = _patch_settings_json(
+                            settings_path=self.config.get_settings_path(),
+                            base_url=base_url,
+                            api_key=api_key,
+                            model=model
+                        )
+                        tmux_cc_cmd = f'env -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_CUSTOM_HEADERS ANTHROPIC_BASE_URL="{base_url}" ANTHROPIC_API_KEY="{api_key}" {self.tmux_cc_bin} --permission-mode bypassPermissions --allowedTools "Read,Edit,Write" --effort low --setting-sources "" --settings "{{}}"'
+                    elif base_url and is_internal_api:
+                        # Internal API (comate): patch settings.json to change base_url, keep token auth
+                        settings_backup = _patch_settings_json(
+                            settings_path=self.config.get_settings_path(),
+                            base_url=base_url,
+                            model=model
+                        )
+                        tmux_cc_cmd = f'IS_SANDBOX=1 {self.tmux_cc_bin} --permission-mode bypassPermissions --allowedTools "Read,Edit,Write" --effort low'
+                    else:
+                        # No config: use settings.json defaults
+                        tmux_cc_cmd = f'IS_SANDBOX=1 {self.tmux_cc_bin} --permission-mode bypassPermissions --allowedTools "Read,Edit,Write" --effort low'
+                    
+                    if model:
+                        tmux_cc_cmd += f' --model "{model}"'
+                    
                     _tmux_send_keys(session_name, tmux_cc_cmd, "Enter")
 
                     # Step 2: Wait for tmux_cc to start and show trust prompt
@@ -609,6 +794,9 @@ class TmuxCcTaskHandler:
                         print(f"[tmux_cc] WARNING: Output file still contains placeholder after {max_wait_for_file}s", file=sys.stderr)
 
                     print(f"[tmux_cc] Task completed, session '{session_name}' preserved for observation", file=sys.stderr)
+                    
+                    # Restore settings.json after task completes
+                    _restore_settings_json(settings_backup)
 
 
 if __name__ == "__main__":
