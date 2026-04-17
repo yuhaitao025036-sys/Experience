@@ -1,13 +1,16 @@
 
-AgentTask Import[experience/llm_client/agent_task.viba]
+AgentTask := Import[experience/llm_client/agent_task.viba]
+RawLlmConfig := Import[experience/llm_client/agent_config.viba]
+AgentConfigFactory := Import[experience/llm_client/agent_config_factory.viba]
 
 RawLlmTaskHandler :=
-    # __call__
+    # Task handler for raw_llm_api method using OpenAI-compatible API
+    # Now uses RawLlmConfig for configuration management
     void
     <- NestedList[$agent_task AgentTask]
-    <- $llm_env dict[str, str] # default None
+    <- $llm_env dict[str, str] # Optional, for backward compatibility
     # __init__
-    <- ()
+    <- $config RawLlmConfig # Optional, default config for this handler instance
     # inline
     <- (($workspace_dir, $prompt, $output_relative_dir_or_list, $todo_file_content_hint) <- $agent_task)
     <- ($packed_workspace str
@@ -18,6 +21,12 @@ RawLlmTaskHandler :=
         <- grep_by_file_content_hint
         <- $root_dir f"{workspace_dir}/{output_relative_dir}"
         <- $todo_file_content_hint)
+    # Configuration priority: runtime llm_env > constructor config > factory default
+    <- $effective_config {
+        if llm_env: convert llm_env to RawLlmConfig
+        elif self.default_config: use self.default_config
+        else: AgentConfigFactory.create_raw_llm_config()
+    }
     <- ($raw_llm_prompt_template str <- '''
         {prompt}
 
@@ -33,7 +42,7 @@ RawLlmTaskHandler :=
         str
         <- $raw_llm_query
         <- $raw_llm_prompt_template
-        <- $llm_env)
+        <- $effective_config)
     <- (NestList[OutputFilesList[$output_file_content str]]
         <- async_gather_run
         <- NestList[OutputFilesList[$async_do_for_one_batch]])

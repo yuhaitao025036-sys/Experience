@@ -11,6 +11,10 @@ test_baseline :=
     <- $seed (int | None) # default None
     <- $experiment_dir (str | None) # default None
     # inline
+    # Setup environment from ~/.experience.json based on llm_method
+    <- { Import[experience/llm_client/config.viba].setup_env_for_method($llm_method) }
+    <- $config_summary { Import[experience/llm_client/config.viba].get_config_summary($llm_method) }
+    <- { print(f"[Config] {llm_method}: {config_summary}") }
     <- $dataset_dir str <- { ./codebase/ }
     <- $tmpdir str <- tempfile.mkdtemp()
     <- ($dataset_cache_dir (str | None) <- { if $experiment_dir then path_join($experiment_dir, "dataset") else None })
@@ -21,6 +25,7 @@ test_baseline :=
         <- $tmpdir
         <- $dataset_cache_dir
         <- $seed)
+    <- { tracker.log(f"LLM Config ({llm_method}): {config_summary}") }
     <- (IterationList[int] <- range <- $num_iterations)
     <- $baseline_model (
         Import[./baseline_coding_agent_model.viba].BaselineCodingAgentModel |

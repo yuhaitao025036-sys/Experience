@@ -1,25 +1,37 @@
 
+AgentTask := Import[experience/llm_client/agent_task.viba]
+TmuxCcConfig := Import[experience/llm_client/agent_config.viba]
+AgentConfigFactory := Import[experience/llm_client/agent_config_factory.viba]
+
 TmuxCcTaskHandler :=
-    # Use tmux_cc (ducc) CLI to process agent tasks
+    # Use tmux_cc (agent) CLI to process agent tasks
     # Supports interactive tmux mode for visual observation or subprocess mode for batch processing
+    # Now uses TmuxCcConfig for configuration management
     void
-    <- NestedList[$agent_task Import[experience/llm_client/agent_task.viba]]
+    <- NestedList[$agent_task AgentTask]
     <- $llm_env dict[str, str] # default None
     <- $interactive bool # default False
     <- $auto_confirm bool # default True
     <- $tmux_session str # default None
-    <- ()
+    # __init__
+    <- $config TmuxCcConfig # Optional, if None uses AgentConfigFactory.create_tmux_cc_config()
     # Pipeline:
-    # 1. Find the tmux_cc binary from environment or default paths
-    <- $tmux_cc_bin { search TMUX_CC_BIN env, then PATH, then ~/.comate/extensions/ }
+    # 1. Get agent binary and settings from config
+    <- $tmux_cc_bin { config.get_cli_path() }
+    <- $settings_path { config.get_settings_path() }
     # 2. Prepare workspace root directory
-    <- $workspace_root { use TMUX_CC_WORKSPACE_ROOT env or default ~/.tmux_cc_tmp/ }
+    <- $workspace_root { from config.workspace_root or TMUX_CC_WORKSPACE_ROOT env or default ~/.tmux_cc_tmp/ }
     # 3. For each task, create isolated workspace with input/output directories
     <- $task_workspace { create task dir with input/prompt.txt, input/packed_workspace.txt, output/ }
-    # 4. Build file-based prompt that tells ducc to read from workspace files
-    <- $file_based_prompt { instruct ducc to read from input/ and write to output/result.txt }
-    # 5. Run tmux_cc in interactive tmux mode or subprocess mode
+    # 4. Patch settings.json if using external API (Qianfan)
+    <- { _ensure_settings_json_clean to restore from backup if needed }
+    <- { _patch_settings_json to configure external API authentication }
+    # 5. Build file-based prompt that tells agent to read from workspace files
+    <- $file_based_prompt { instruct agent to read from input/ and write to output/result.txt }
+    # 6. Run tmux_cc in interactive tmux mode or subprocess mode
     <- $run_mode { "tmux" if interactive else "subprocess" }
     <- { batch run all tasks using tmux_cc_bin with file_based_prompt }
-    # 6. Copy results back from workspace to original directory
+    # 7. Restore settings.json from backup
+    <- { _restore_settings_json }
+    # 8. Copy results back from workspace to original directory
     <- { copy output from task_workspace to original workspace_dir }

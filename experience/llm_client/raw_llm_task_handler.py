@@ -1,8 +1,10 @@
 import os
 import asyncio
-from typing import Dict, List, Optional
+from typing import Optional, Dict
 
 from experience.llm_client.agent_task import AgentTask
+from experience.llm_client.agent_config import RawLlmConfig
+from experience.llm_client.agent_config_factory import AgentConfigFactory
 from experience.fs_util.pack_dir import pack_dir
 
 
@@ -16,7 +18,7 @@ def _flatten_nested(nested) -> list:
     return result
 
 
-def _grep_by_file_content_hint(root_dir: str, todo_file_content_hint: str) -> List[str]:
+def _grep_by_file_content_hint(root_dir: str, todo_file_content_hint: str) -> list[str]:
     """Find all files under root_dir whose content contains the hint string."""
     todo_files = []
     for dirpath, dirnames, filenames in os.walk(root_dir):
@@ -33,7 +35,41 @@ def _grep_by_file_content_hint(root_dir: str, todo_file_content_hint: str) -> Li
 
 
 class RawLlmTaskHandler:
+    """Handler for running tasks via raw_llm_api method.
+    
+    This handler is decoupled from configuration details through RawLlmConfig.
+    Supports both constructor-time config and runtime llm_env for backward compatibility.
+    
+    Args:
+        config: Optional RawLlmConfig. If None, creates default config.
+    """
+    
+    def __init__(self, config: Optional[RawLlmConfig] = None):
+        self.default_config = config
+    
     def __call__(self, all_tasks, llm_env: Optional[Dict[str, str]] = None) -> None:
+        """Execute tasks via raw_llm_api.
+        
+        Args:
+            all_tasks: List of AgentTask objects or nested list.
+            llm_env: Optional environment variables to override config.
+                    For backward compatibility with original API.
+        """
+        # Create config: prioritize llm_env (runtime) over default_config (constructor)
+        if llm_env is not None:
+            # Runtime config from llm_env (original behavior)
+            config = RawLlmConfig(
+                base_url=llm_env.get("LLM_BASE_URL"),
+                api_key=llm_env.get("LLM_API_KEY"),
+                model=llm_env.get("LLM_MODEL"),
+                username=llm_env.get("LLM_USERNAME"),
+            )
+        elif self.default_config is not None:
+            # Use constructor config
+            config = self.default_config
+        else:
+            # No config provided, create from ~/.experience.json or environment
+            config = AgentConfigFactory.create_raw_llm_config()
         flat_tasks = _flatten_nested(all_tasks)
 
         # Collect all async jobs: (todo_file_path, coroutine)
@@ -71,7 +107,7 @@ class RawLlmTaskHandler:
 
         async def _do_one(todo_file_path: str, raw_llm_prompt: str):
             from experience.llm_client.raw_llm_query import raw_llm_query
-            output_content = await raw_llm_query(raw_llm_prompt, llm_env=llm_env)
+            output_content = await raw_llm_query(raw_llm_prompt, config=config)
             with open(todo_file_path, "w", encoding="utf-8") as f:
                 f.write(output_content)
 

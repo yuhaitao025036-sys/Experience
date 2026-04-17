@@ -1,0 +1,45 @@
+
+AgentConfig :=
+    # Abstract base class for all LLM method configurations
+    # Hides implementation details from query layer
+    <- $get_method_name { return method name: "raw_llm_api", "coding_agent", or "tmux_cc" }
+
+RawLlmConfig :=
+    # Configuration for raw_llm_api method (OpenAI-compatible API)
+    AgentConfig
+    <- $base_url str # Optional, API base URL (e.g., https://qianfan.baidubce.com/v2)
+    <- $api_key str # Optional, API key
+    <- $model str # Optional, model name
+    <- $username str # Optional, username for custom headers
+    <- $custom_headers dict[str, str] # Optional, custom HTTP headers
+    # Methods:
+    <- $get_method_name { return "raw_llm_api" }
+    <- $to_env { convert config to environment variables dict }
+
+ClaudeAgentConfig :=
+    # Configuration for coding_agent method (agent in programmatic mode)
+    AgentConfig
+    <- $cli_path str # Optional, path to agent CLI binary
+    <- $settings_path str # Optional, path to settings.json
+    <- $setting_sources str # Optional, setting sources parameter
+    <- $model str # Optional, model name
+    <- $cwd str # Optional, working directory
+    <- $allowed_tools list[str] # Optional, list of allowed tools
+    <- $permission_mode str # default "acceptEdits"
+    # Methods:
+    <- $get_method_name { return "coding_agent" }
+    <- $to_options { convert config to ClaudeAgentOptions dict }
+
+TmuxCcConfig :=
+    # Configuration for tmux_cc method (agent in tmux interactive/batch mode)
+    AgentConfig
+    <- $cli_path str # Optional, path to agent CLI binary
+    <- $settings_path str # Optional, path to settings.json
+    <- $model str # Optional, model name
+    <- $base_url str # Optional, API base URL
+    <- $api_key str # Optional, API key
+    <- $workspace_root str # Optional, workspace root directory
+    # Methods:
+    <- $get_method_name { return "tmux_cc" }
+    <- $get_cli_path { return cli_path }
+    <- $get_settings_path { return settings_path }

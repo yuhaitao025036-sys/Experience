@@ -1,0 +1,70 @@
+
+RawLlmConfig := Import[experience/llm_client/agent_config.viba]
+ClaudeAgentConfig := Import[experience/llm_client/agent_config.viba]
+TmuxCcConfig := Import[experience/llm_client/agent_config.viba]
+AgentBinaryProvider := Import[experience/llm_client/agent_binary_provider.viba]
+
+AgentConfigFactory :=
+    # Factory for creating agent configurations
+    # Centralizes all configuration logic including provider interaction
+
+    create_raw_llm_config :=
+        # Create configuration for raw_llm_api method
+        RawLlmConfig
+        <- $base_url str # Optional, API base URL
+        <- $api_key str # Optional, API key
+        <- $model str # Optional, model name
+        <- $username str # Optional, username for custom headers
+        # inline
+        <- $config { load from ~/.experience.json or environment variables }
+        <- { return RawLlmConfig with merged parameters }
+
+    create_claude_agent_config :=
+        # Create configuration for coding_agent method
+        ClaudeAgentConfig
+        <- $cwd str # Optional, working directory
+        <- $allowed_tools list[str] # Optional, allowed tools list
+        <- $permission_mode str # default "acceptEdits"
+        <- $model str # Optional, model name
+        <- $agent_provider AgentBinaryProvider # Optional, agent binary provider
+        <- $ducc_provider AgentBinaryProvider # Optional, deprecated backward compatibility
+        # inline
+        <- $provider { use agent_provider or ducc_provider or get_default_provider() }
+        <- $cli_path { provider.get_cli_path() }
+        <- $settings_path { provider.get_settings_path() or "{}" for external API }
+        <- $config { load from ~/.experience.json }
+        <- { return ClaudeAgentConfig with all parameters }
+
+    create_tmux_cc_config :=
+        # Create configuration for tmux_cc method
+        TmuxCcConfig
+        <- $model str # Optional, model name
+        <- $agent_provider AgentBinaryProvider # Optional, agent binary provider
+        <- $ducc_provider AgentBinaryProvider # Optional, deprecated backward compatibility
+        # inline
+        <- $provider { use agent_provider or ducc_provider or get_default_provider() }
+        <- $cli_path { provider.get_cli_path() }
+        <- $settings_path { provider.get_settings_path() }
+        <- $config { load from ~/.experience.json and environment }
+        <- $workspace_root { from TMUX_CC_WORKSPACE_ROOT or default ~/.tmux_cc_tmp }
+        <- { return TmuxCcConfig with all parameters }
+
+    create_config_by_method :=
+        # Create configuration by method name
+        AgentConfig
+        <- $method str # "raw_llm_api", "coding_agent", or "tmux_cc"
+        <- $kwargs dict # Method-specific parameters
+        # inline
+        <- { dispatch to appropriate create_*_config method based on method name }
+
+create_agent_config :=
+    # Convenience function for backward compatibility
+    ClaudeAgentConfig
+    <- $cwd str # Optional
+    <- $allowed_tools list[str] # Optional
+    <- $permission_mode str # default "acceptEdits"
+    <- $model str # Optional
+    <- $agent_provider AgentBinaryProvider # Optional
+    <- $ducc_provider AgentBinaryProvider # Optional, deprecated
+    # inline
+    <- AgentConfigFactory.create_claude_agent_config

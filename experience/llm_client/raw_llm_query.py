@@ -1,29 +1,18 @@
-# 安装：pip3 install openai
+"""Raw LLM API query interface.
+
+This module provides a clean interface for querying OpenAI-compatible LLM APIs,
+decoupled from configuration details through AgentConfig.
+"""
+
 import asyncio
 import json
 import os
 import re
-from typing import Dict, Optional
-from openai import AsyncOpenAI  # 导入异步客户端
-
-
-DEFAULT_LLM_ENV = {
-    "LLM_API_KEY": os.environ.get("LLM_API_KEY", ""),
-    "LLM_BASE_URL": os.environ.get("LLM_BASE_URL", ""),
-    "LLM_MODEL": os.environ.get("LLM_MODEL", ""),
-}
-
-
-def _get_custom_headers() -> Dict[str, str]:
-    """Get custom headers required for internal API authentication."""
-    username = os.environ.get("USER", os.environ.get("LLM_USERNAME", "unknown"))
-    custom_header_value = json.dumps({
-        "agentId": f"raw_llm_api:user:{username}",
-        "username": username,
-        "repo": "",
-        "source": "raw_llm_api",
-    })
-    return {"comate_custom_header": custom_header_value}
+import sys
+from typing import Optional
+from openai import AsyncOpenAI
+from experience.llm_client.agent_config import RawLlmConfig
+from experience.llm_client.agent_config_factory import AgentConfigFactory
 
 
 def _strip_think_tags(content: str) -> str:
@@ -31,46 +20,71 @@ def _strip_think_tags(content: str) -> str:
 
     Some models (e.g., DeepSeek, MiniMax) output thinking process in <think> tags.
     """
-    # Remove <think>...</think> blocks (including multiline)
     content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
-    # Also handle unclosed <think> tag at the start
     content = re.sub(r'^<think>.*', '', content, flags=re.DOTALL)
     return content.strip()
 
 
-async def raw_llm_query(prompt: str, llm_env: Optional[Dict[str, str]] = None):
-    env = llm_env if llm_env is not None else DEFAULT_LLM_ENV
-
-    # Get base_url and ensure it ends with /v1
-    base_url = env.get('LLM_BASE_URL') or os.environ.get('LLM_BASE_URL')
-    if base_url and not base_url.endswith('/v1'):
-        base_url = base_url.rstrip('/') + '/v1'
-
-    # 每次调用创建客户端，避免跨 asyncio.run() 复用已关闭的连接池
+async def raw_llm_query(
+    prompt: str,
+    config: Optional[RawLlmConfig] = None,
+):
+    """Query OpenAI-compatible LLM API with the given prompt.
+    
+    This function is completely decoupled from configuration details.
+    
+    Args:
+        prompt: The prompt to send to the LLM.
+        config: Optional RawLlmConfig. If None, creates default config from environment/~/.experience.json.
+    
+    Returns:
+        The LLM response text.
+    """
+    # Create config if not provided
+    if config is None:
+        config = AgentConfigFactory.create_raw_llm_config()
+    
+    # Get custom headers for authentication
+    custom_headers = {}
+    if config.username:
+        custom_header_value = json.dumps({
+            "agentId": f"raw_llm_api:user:{config.username}",
+            "username": config.username,
+            "repo": "",
+            "source": "raw_llm_api",
+        })
+        custom_headers["comate_custom_header"] = custom_header_value
+        print(f"[DEBUG] Using username: {config.username}", file=sys.stderr)
+    
+    # Create OpenAI client
     client = AsyncOpenAI(
-        api_key=env.get('LLM_API_KEY') or os.environ.get('LLM_API_KEY'),
-        base_url=base_url,
-        default_headers=_get_custom_headers(),
+        api_key=config.api_key,
+        base_url=config.base_url,
+        default_headers=custom_headers,
     )
-    # 发送异步请求
+    
     try:
         response = await client.chat.completions.create(
-            model=env.get('LLM_MODEL') or os.environ.get('LLM_MODEL'),
+            model=config.model,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant. Output raw content only, no thinking process."},
                 {"role": "user", "content": prompt},
             ],
             stream=False
         )
+        
         # Handle different response formats
         if isinstance(response, str):
             content = response
         else:
             content = response.choices[0].message.content
+        
         # Strip <think> tags from output
         return _strip_think_tags(content)
+        
     finally:
         await client.close()
+
 
 if __name__ == "__main__":
     ret = asyncio.run(raw_llm_query("Hello"))

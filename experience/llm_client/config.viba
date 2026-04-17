@@ -1,0 +1,28 @@
+
+get_config :=
+    # Load LLM configuration from ~/.experience.json
+    # Returns configuration dict for the specified method or entire config if method not specified
+    dict[str, Any]
+    <- $method str # default None, one of: "raw_llm_api", "coding_agent", "tmux_cc"
+    # inline
+    <- $config_file str "~/.experience.json"
+    <- $config_dict { load JSON from config_file with fallback to {} }
+    <- { return config_dict[method] if method else config_dict }
+
+setup_env_for_method :=
+    # Setup environment variables based on method configuration from ~/.experience.json
+    void
+    <- $method str # one of: "raw_llm_api", "coding_agent", "tmux_cc"
+    # inline
+    <- $config { get_config(method) }
+    <- { set environment variables based on config for the specified method }
+    <- { ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY, ANTHROPIC_MODEL for Anthropic-compatible }
+    <- { LLM_BASE_URL, LLM_API_KEY, LLM_MODEL, LLM_USERNAME for OpenAI-compatible }
+
+get_config_summary :=
+    # Get a human-readable summary of configuration for the specified method
+    str
+    <- $method str # one of: "raw_llm_api", "coding_agent", "tmux_cc"
+    # inline
+    <- $config { get_config(method) }
+    <- { return formatted string with base_url, model, api_key presence }

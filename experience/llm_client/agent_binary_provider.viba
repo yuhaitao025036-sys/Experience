@@ -1,0 +1,56 @@
+
+AgentBinaryProvider :=
+    # Abstract base class for locating agent binary and settings files
+    # Provides abstraction layer for different agent installations
+    
+    get_cli_path :=
+        # Get the path to agent CLI binary
+        str
+        <- ()
+        # inline
+        <- { return path to agent binary or None if not found }
+    
+    get_settings_path :=
+        # Get the path to agent settings.json file
+        str
+        <- ()
+        # inline
+        <- { return path to settings.json or None if not found }
+
+ClaudeCodeProvider :=
+    # Locate Claude Code (ducc) binary from Comate extension
+    AgentBinaryProvider
+    <- ()
+    # inline
+    <- $cli_path { glob ~/.comate/extensions/baidu.baidu-cc-*/resources/native-binary/bin/ducc }
+    <- $settings_path { glob ~/.comate/extensions/baidu.baidu-cc-*/resources/settings.json }
+
+CustomAgentProvider :=
+    # Explicit paths for custom agent installations
+    AgentBinaryProvider
+    <- $cli_path str # Path to agent binary
+    <- $settings_path str # Optional, path to settings.json
+    # inline
+    <- { use provided paths directly }
+
+EnvironmentAgentProvider :=
+    # Read agent paths from environment variables
+    AgentBinaryProvider
+    <- ()
+    # inline
+    <- $cli_path { from TMUX_CC_BIN environment variable }
+    <- $settings_path { from TMUX_CC_SETTINGS environment variable }
+
+get_default_provider :=
+    # Get default agent binary provider
+    # Priority: ClaudeCodeProvider -> EnvironmentAgentProvider
+    AgentBinaryProvider
+    <- ()
+    # inline
+    <- { return ClaudeCodeProvider if comate extension found, else EnvironmentAgentProvider }
+
+# Backward compatibility aliases
+DuccProvider := AgentBinaryProvider
+ComateDuccProvider := ClaudeCodeProvider
+CustomDuccProvider := CustomAgentProvider
+EnvironmentDuccProvider := EnvironmentAgentProvider
