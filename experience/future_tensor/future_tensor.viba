@@ -1,0 +1,20 @@
+FutureTensor[$shape list[int]] :=
+    SymbolicTensor[$shape list[int]]
+    * $ft_forwarded bool
+    * $ft_forward (void <- $prompt_tensor SymbolicTensor[$shape list[int]])
+    * $ft_async_get Async[str <- $coordinates list[int] <- $prompt]
+
+FutureTensor.ft_forward :=
+    void
+    <- $self
+    <- $prompt_tensor SymbolicTensor[$shape list[int]]
+    # inline
+    <- { early return if self.ft_forwarded }
+    <- { set self.ft_forwarded at the end of this function }
+    <- (AsyncList[$coordinates list[int]] <- $self.shape)
+    <- (AsyncList[$prompt str] <- $prompt_tensor)
+    <- Async[$sole_elem_output str <- self.ft_async_get <- $coordinates <- $prompt]
+    <- (void
+        <- $self.st_assign
+        <- Import[symbolic_tensor make_tensor]
+        <- list[$sole_elem_output])
