@@ -1,7 +1,7 @@
 """
 FtRecurrent := torch.autograd.Function[
-    $forward Import[{future_tensor function recurrent_forward.viba}],
-    $backward Import[{future_tensor function recurrent_backward.viba}],
+    $forward Import[{future_tensor function ft_recurrent_forward.viba}],
+    $backward Import[{future_tensor function ft_recurrent_backward.viba}],
     $ctx.topk_self_confidence_but_failed int # default 8
     $ctx.grad_input_prompt BackwardPromptCallable # default None
     $ctx.task_prompt str # default ""
@@ -16,8 +16,8 @@ import torch
 from typing import Callable, Dict, Optional, Tuple
 
 from experience.future_tensor.future_tensor import FutureTensor
-from experience.future_tensor.function.recurrent_forward import recurrent_forward
-from experience.future_tensor.function.recurrent_backward import (
+from experience.future_tensor.function.ft_recurrent_forward import recurrent_forward
+from experience.future_tensor.function.ft_recurrent_backward import (
     recurrent_backward,
     default_prompt_for_recurrent_grad_input,
     BackwardPromptCallable,

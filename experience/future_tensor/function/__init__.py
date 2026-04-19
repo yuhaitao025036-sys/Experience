@@ -1,3 +1,3 @@
 from experience.future_tensor.function.ft_slice import ft_slice
 from experience.future_tensor.function.ft_unsqueeze import ft_unsqueeze
-from experience.future_tensor.function.recurrent_forward import recurrent_forward
+from experience.future_tensor.function.ft_recurrent_forward import recurrent_forward
