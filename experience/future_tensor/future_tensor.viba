@@ -2,7 +2,7 @@ FutureTensor[$shape list[int]] :=
     SymbolicTensor[$shape list[int]]
     * $ft_forwarded bool
     * $ft_forward (void <- $prompt_tensor SymbolicTensor[$shape list[int]])
-    * $ft_async_get (Awaitable[(str, $confidence float)] <- $coordinates list[int] <- $prompt)
+    * $ft_async_get (Awaitable[(str, $confidence Bounded0To1[float])] <- $coordinates list[int] <- $prompt)
 
 FutureTensor.ft_forward :=
     void

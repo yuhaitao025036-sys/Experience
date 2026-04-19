@@ -3,7 +3,7 @@ FutureTensor[$shape list[int]] :=
     SymbolicTensor[$shape list[int]]
     * $ft_forwarded bool
     * $ft_forward (void <- $prompt_tensor SymbolicTensor[$shape list[int]])
-    * $ft_async_get Async[(str, $confidence float) <- $coordinates list[int] <- $prompt]
+    * $ft_async_get (Awaitable[(str, $confidence Bounded0To1[float])] <- $coordinates list[int] <- $prompt)
 
 FutureTensor.ft_forward :=
     void
@@ -31,6 +31,11 @@ import torch
 
 from experience.symbolic_tensor.tensor_util.make_tensor import make_tensor
 from experience.symbolic_tensor.tensor_util.assign_tensor import assign_tensor
+
+
+def _clamp_confidence(value: float) -> float:
+    """Clamp confidence to [0.0, 1.0] (Bounded0To1)."""
+    return max(0.0, min(1.0, value))
 
 
 def _read_element(tensor: torch.Tensor, flat_index: int) -> str:
@@ -69,6 +74,7 @@ class FutureTensor:
         relative_to: Storage root directory.
         ft_async_get: Async callable (coordinates, prompt) -> (str, float)
             that produces (content, confidence) for the given coordinates and prompt.
+            Confidence is clamped to [0.0, 1.0].
     """
 
     def __init__(
@@ -133,9 +139,9 @@ class FutureTensor:
 
         results: List[Tuple[str, float]] = asyncio.run(_gather())
 
-        # Unpack (content, confidence) pairs
+        # Unpack (content, confidence) pairs; clamp confidence to [0, 1]
         sole_elem_output: List[str] = [content for content, _ in results]
-        confidences: List[float] = [confidence for _, confidence in results]
+        confidences: List[float] = [_clamp_confidence(c) for _, c in results]
 
         # Set self.data[coordinates] = confidence for each element
         for coords, confidence in zip(all_coordinates, confidences):
@@ -406,5 +412,48 @@ if __name__ == "__main__":
         except ValueError as e:
             run_test("ValueError propagated", "boom" in str(e))
             run_test("ft_forwarded still False on error", ft.ft_forwarded is False)
+
+    # ── Test 11: Confidence clamping (Bounded0To1) ─────────────────────
+
+    print("Test 11: Confidence clamping")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        async def oob_confidence_get(coordinates, prompt):
+            if coordinates == [0]:
+                return ("over", 1.5)
+            elif coordinates == [1]:
+                return ("under", -0.3)
+            else:
+                return ("normal", 0.7)
+
+        ft = FutureTensor([3], tmpdir, oob_confidence_get)
+        prompt_t = make_tensor(["a", "b", "c"], tmpdir)
+        ft.ft_forward(prompt_t)
+
+        run_test("Over 1.0 clamped to 1.0",
+                 abs(ft.tensor.data.flatten()[0].item() - 1.0) < 0.01)
+        run_test("Below 0.0 clamped to 0.0",
+                 abs(ft.tensor.data.flatten()[1].item() - 0.0) < 0.01)
+        run_test("Normal 0.7 preserved",
+                 abs(ft.tensor.data.flatten()[2].item() - 0.7) < 0.01)
+        run_test("Content still correct", read_storage(ft.tensor, 0) == "over")
+
+    # ── Test 12: Per-element varying confidence ────────────────────────
+
+    print("Test 12: Per-element varying confidence")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        async def varying_get(coordinates, prompt):
+            c = coordinates[0]
+            return (f"item_{c}", c * 0.25)
+
+        ft = FutureTensor([5], tmpdir, varying_get)
+        prompt_t = make_tensor(["p"] * 5, tmpdir)
+        ft.ft_forward(prompt_t)
+
+        for i in range(5):
+            expected_conf = i * 0.25
+            actual_conf = ft.tensor.data.flatten()[i].item()
+            run_test(f"Confidence [{i}] = {expected_conf}",
+                     abs(actual_conf - expected_conf) < 0.01,
+                     expected_conf, actual_conf)
 
     print("\nAll tests completed.")

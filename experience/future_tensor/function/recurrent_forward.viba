@@ -1,0 +1,43 @@
+recurrent_forward :=
+    $output FutureTensor[($prefix_dims ...)]
+    <- $input FutureTensor[($prefix_dims ..., $recurrent_dim int, 3)]
+    # inline
+    <- $output.ft_async_get recurrent_forward_async_get
+
+recurrent_forward_async_get :=
+    Awaitable[(str, float)]
+    <- $cooridates list[int]
+    <- $prompt str
+    # captured args
+    <- $input FutureTensor[($prefix_dims ..., $recurrent_dim int, 3)]
+    # inline
+    <- $cur_prompt ($prompt)
+    <- (Loop[$i int] <- range <- $recurrent_dim)
+    <- (($cur_output str, $cur_output_confidence float)
+        <- $input.ft_async_get 
+        <- {[*cooridates, i, 0]}
+        <- $cur_prompt)
+    <- (($cur_output_status ("Ok"|"Error"), $cur_output_status_confidence float)
+        <- $input.ft_async_get 
+        <- {[*cooridates, i, 1]}
+        <- $cur_prompt)
+    <- { return (cur_output, 1.0) if cur_output_status is "Ok" }
+    <- (($error_details str, _)
+        <- $input.ft_async_get 
+        <- {[*cooridates, i, 2]}
+        <- $cur_prompt)
+    <- {
+        # for next iteration
+        cur_prompt = (
+            f"{cur_prompt}\n"
+            f"====[Iteration {i}]====\n"
+            f"Output:\n\n{cur_output}\n\n"
+            f"Status:{cur_output_status}\n\n"
+            f"Error Details:\n\n{error_details}\n\n"
+        )
+    }
+    <- { 
+        if all trials failed:
+            return ($cur_output, cur_output_confidence * cur_output_status_confidence)
+            where cur_output_confidence * cur_output_status_confidence is the max
+     }
