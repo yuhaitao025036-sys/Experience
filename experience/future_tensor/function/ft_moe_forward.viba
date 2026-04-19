@@ -17,7 +17,7 @@ ft_moe_forward :=
     ($output FutureTensor[$shape],
      $prompt_tensor FutureTensor[$shape],
      $selected_experience_qkv_indexes_map dict)
-    <- $input FutureTensor  # maybe None; for chaining. requires_grad flows through
+    <- $input FutureTensor  # maybe none symbolic tensor; for chaining. requires_grad flows through
     <- $experience ExperienceTensor[Symbolic[torch.Tensor]]
     <- $output_prompt OutputPromptCallable # default None
     <- $query_prompt QueryPromptCallable # default None
@@ -27,8 +27,8 @@ ft_moe_forward :=
     <- $llm_method ("coding_agent" | "raw_llm_api") # default raw_llm_api
     <- $llm_env dict[str, str] # default None
     # inline
-    <- ($shape <- $input.shape if $input is not None else [1])
-    <- { prompt_tensor = future tensor of none_like(shape) }
+    <- ($shape <- $input.shape)
+    <- { prompt_tensor = future tensor of none_like(input) }
     <- { selected_experience_qkv_indexes_map = {} }
     <- $output.ft_async_get ft_moe_forward_async_get
 
@@ -53,8 +53,8 @@ ft_moe_forward_async_get :=
     <- { prompt_tensor.st_setitem(coordinates, prompt) }
     # 2. Build scalar_input from input[coordinates] (= st_moe.input)
     <- ($input_content str <- {
-        if input is not None:
-            read input._tensor[coordinates] content
+        if input.data[coordinates] > 0:
+            read input content at coordinates
         else:
             ""
     })

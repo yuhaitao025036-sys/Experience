@@ -8,7 +8,7 @@ Parameter mapping:
 
 The output is a FutureTensor whose ft_async_get:
   1. Takes (coordinates, prompt) from upstream
-  2. If input is not None, reads input[coordinates] content as st_moe.input
+  2. If input coefficient > 0, reads input[coordinates] content as st_moe.input
   3. Uses prompt as st_moe.context (requires_grad=False)
   4. Runs MoE: query, select topk, workspace, LLM
   5. Returns (output_content, Status)
@@ -43,7 +43,7 @@ from experience.symbolic_tensor.tensor_util.st_setitem import st_setitem
 
 
 def ft_moe_forward(
-    input: Optional[FutureTensor],
+    input: FutureTensor,
     experience: torch.Tensor,
     output_prompt: Optional[Callable[..., str]] = None,
     query_prompt: Optional[Callable[..., str]] = None,
@@ -62,13 +62,14 @@ def ft_moe_forward(
 
     For each element, the ft_async_get callback:
       1. Receives a prompt string (= st_moe.context)
-      2. If input is not None, reads input[coordinates] content (= st_moe.input)
+      2. If input coefficient > 0, reads input[coordinates] content (= st_moe.input)
       3. Generates query keywords, selects topk experience entries
       4. Builds workspace (with context view), runs LLM
       5. Returns (output_content, Status)
 
     Args:
-        input: FutureTensor (= st_moe.input). May be None (first in chain).
+        input: FutureTensor (= st_moe.input). May be a none tensor (zero coefficients)
+            when first in chain.
         experience: ExperienceTensor (last dim=3: query, key, value).
         output_prompt: Custom forward prompt builder. None uses default.
         query_prompt: Custom query prompt builder. None uses default.
@@ -80,16 +81,15 @@ def ft_moe_forward(
 
     Returns:
         (output, prompt_tensor, selected_experience_qkv_indexes_map):
-            output: FutureTensor of same shape as input (or [1] if input is None).
+            output: FutureTensor of same shape as input.
             prompt_tensor: FutureTensor storing prompts (for backward as context).
             selected_experience_qkv_indexes_map: Dict mapping coordinates to indexes.
     """
-    input_shape = input.shape if input is not None else [1]
-    base_dir = input.st_relative_to if input is not None else experience.st_relative_to
+    input_shape = input.shape
 
-    # Create prompt_tensor: same shape, stores prompts for backward (= st_moe.context)
+    # Create prompt_tensor: same shape as input, stores prompts for backward (= st_moe.context)
     prompt_tensor = FutureTensor(
-        input_shape, base_dir,
+        input_shape, input.st_relative_to,
         ft_async_get=None,  # not used — written directly via st_setitem
     )
 
@@ -112,18 +112,20 @@ def ft_moe_forward(
         st_setitem(prompt_tensor._tensor, coordinates, prompt)
 
         # 2. Build scalar_input from input[coordinates] (= st_moe.input)
-        if input is not None:
+        #    Coefficient-based check: input is always a FutureTensor, but may be
+        #    a "none tensor" with zero coefficients when first in chain.
+        if input._tensor.data[tuple(coordinates)].item() > 0:
             flat_idx = sum(c * s for c, s in zip(coordinates, input._tensor.stride()))
             input_content = _read_file_content(input._tensor, flat_idx)
         else:
-            input_content = None
+            input_content = ""
         scalar_input = make_tensor(
             [input_content] if input_content else ["TODO"],
-            base_dir,
+            input.st_relative_to,
         )
 
         # 3. Build scalar_context from prompt (= st_moe.context, requires_grad=False)
-        scalar_context = make_tensor([prompt], base_dir)
+        scalar_context = make_tensor([prompt], input.st_relative_to)
 
         # 4. Get query from scalar_input
         input_query = get_query_tensor(
@@ -206,7 +208,7 @@ def ft_moe_forward(
             None, _sync_moe_for_element, coordinates, prompt,
         )
 
-    output = FutureTensor(input_shape, base_dir, ft_moe_forward_async_get)
+    output = FutureTensor(input_shape, input.st_relative_to, ft_moe_forward_async_get)
 
     return output, prompt_tensor, _selected_indexes_map
 
@@ -313,21 +315,27 @@ if __name__ == "__main__":
         run_test("output shape matches input", output.shape == [2])
         run_test("indexes_map is dict", isinstance(indexes_map, dict))
 
-    # ── Tests 5-7 (input=None): Forward with None input ──
-    print("Tests 5a-5c: Forward with input=None")
+    # ── Tests 5a-5c: Forward with none tensor (zero coefficients) ──
+    print("Tests 5a-5c: Forward with none tensor (zero coefficients)")
     with tempfile.TemporaryDirectory() as tmpdir:
         experience_data = [
             ["greeting\nhello", "Hello", "Bonjour"],
         ]
         experience_tensor = make_tensor(experience_data, tmpdir)
 
+        # Create a "none tensor" FutureTensor: ft_async_get returns empty with low coeff
+        async def none_get(coords, prompt):
+            return ("", Status.self_confidence_but_failed(0.0))
+
+        ft_none_input = FutureTensor([1], tmpdir, none_get)
+
         output, prompt_tensor, indexes_map = ft_moe_forward(
-            None, experience_tensor, topk=1,
+            ft_none_input, experience_tensor, topk=1,
         )
 
-        run_test("output shape is [1] when input=None", output.shape == [1])
+        run_test("output shape is [1] with none tensor", output.shape == [1])
         run_test("prompt_tensor shape is [1]", prompt_tensor.shape == [1])
-        run_test("indexes_map is dict (None input)", isinstance(indexes_map, dict))
+        run_test("indexes_map is dict (none tensor)", isinstance(indexes_map, dict))
 
     # ── Tests 8-11: Forward + ft_forward materializes (real LLM) ──
     print("Tests 8-11: Forward + ft_forward (real LLM)")

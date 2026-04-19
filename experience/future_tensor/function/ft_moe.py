@@ -60,7 +60,7 @@ class FtMoe(torch.autograd.Function):
     @staticmethod
     def forward(
         ctx,
-        input: Optional[FutureTensor],
+        input: FutureTensor,
         experience: torch.Tensor,
         output_prompt: Optional[OutputPromptCallable] = None,
         query_prompt: Optional[QueryPromptCallable] = None,
@@ -109,7 +109,7 @@ class FtMoe(torch.autograd.Function):
     def backward(ctx, grad_output: torch.Tensor, grad_prompt_tensor=None, grad_indexes=None):
         # After forward + ft_forward, FutureTensors have materialized ._tensor
         # New mapping:
-        #   st_moe.input   = input._tensor (requires_grad = input is not None)
+        #   st_moe.input   = input._tensor (requires_grad based on coefficients)
         #   st_moe.context = prompt_tensor._tensor (requires_grad=False)
         #   st_moe.experience = experience (direct)
 
@@ -123,12 +123,13 @@ class FtMoe(torch.autograd.Function):
             setattr(experience, attr, val)
 
         # Build input_st (= st_moe.input)
-        if ctx.input_ft is not None:
-            input_st = ctx.input_ft._tensor
+        # input is always a FutureTensor (may be "none tensor" with zero coefficients)
+        input_st = ctx.input_ft._tensor
+        # Check if any coefficient > 0 to decide requires_grad
+        has_content = input_st.data.sum().item() > 0
+        if has_content:
             input_st.requires_grad_(True)
         else:
-            # When ft_moe.input was None, st_moe.input was TODO for each element
-            input_st = todo_tensor_like(output_st)
             input_st.requires_grad_(False)
 
         # Build nested indexes list from map
@@ -167,7 +168,7 @@ class FtMoe(torch.autograd.Function):
 
         # Register symbolic grads keyed by tensor uids
         # grad_input → grad for ft_moe.input
-        if grad_input is not None and ctx.input_ft is not None:
+        if grad_input is not None:
             symbolic_grad_registry.register(input_st.st_tensor_uid, grad_input)
 
         # grad_experience → grad for ft_moe.experience
@@ -181,7 +182,7 @@ class FtMoe(torch.autograd.Function):
 
 
 def ft_moe(
-    input: Optional[FutureTensor],
+    input: FutureTensor,
     experience: torch.Tensor,
     output_prompt: Optional[OutputPromptCallable] = None,
     query_prompt: Optional[QueryPromptCallable] = None,
@@ -202,7 +203,8 @@ def ft_moe(
     Backward: reuses st_moe_backward with direct mapping.
 
     Args:
-        input: FutureTensor (= st_moe.input). May be None (first in chain).
+        input: FutureTensor (= st_moe.input). May be a none tensor (zero coefficients)
+            when first in chain.
         experience: ExperienceTensor (last dim=3: query, key, value).
         output_prompt: Custom forward prompt builder.
         query_prompt: Custom query prompt builder.
