@@ -1,0 +1,180 @@
+# Backward of recurrent_forward.
+#
+# Forward: FutureTensor (lazy, sequential retry loop)
+# Backward: Symbolic[torch.Tensor] (materialized, concurrent LLM reflection)
+#
+# Forward saved context:
+#   input(*prefix, recurrent_dim)   — each [*prefix, i] was an LLM call
+#   output(*prefix)                 — the selected result
+#   prompt_tensor(*prefix, recurrent_dim) — accumulated prompts per iteration
+#
+# Backward produces:
+#   grad_input(*prefix, recurrent_dim) — how each iteration's LLM call should improve
+#
+# Numeric channel:
+#   grad_input.data[*prefix, i] mirrors input.data[*prefix, i] status encoding:
+#     confidence/kConfidenceNotBounded (winning iteration) -> copy grad_output coeff
+#     self_confidence_but_failed (losing iteration) -> attenuated coeff
+#     kContextOverflow / unreached -> 0
+#
+# Symbolic channel:
+#   Per scalar element: slice all relevant tensors, dump const workspace views,
+#   construct LLM prompt, build AgentTask.
+#   Single TaskHandler batch call, then diff + assign back.
+#
+# Pattern follows st_moe_backward_grad_input.
+
+BackwardPromptCallable := $func ($ret str
+    <- $task_prompt str <- $workspace_dir str
+    <- $const_grad_output_view str <- $const_input_view str
+    <- $const_output_view str <- $const_prompt_view str
+    <- $mutable_grad_input_dir str)
+
+default_prompt_for_recurrent_grad_input :=
+    $prompt str
+    <- $task_prompt str
+    <- $workspace_dir str
+    <- $const_grad_output_view str
+    <- $const_input_view str
+    <- $const_output_view str
+    <- $const_prompt_view str
+    <- $mutable_grad_input_dir str
+    # inline
+    <- ($prompt <- '''
+        You are a symbolic gradient calculator for the backward pass
+        of a recurrent generate-validate loop.
+
+        f"{task_prompt}"
+
+        During forward pass, the input tensor contained LLM outputs across
+        multiple retry iterations. One iteration was selected as the final
+        output (by confidence or best-of when all failed). The prompt tensor
+        records the accumulated context each iteration received.
+
+        Now given the output gradient (how the selected output should change),
+        compute how each iteration's input should change.
+
+        Context (read-only):
+        - Output gradient (text diff): f"{const_grad_output_view}"
+        - Original input (per-iteration LLM outputs): f"{const_input_view}"
+        - Selected output: f"{const_output_view}"
+        - Accumulated prompts per iteration: f"{const_prompt_view}"
+          where .../i/data = the prompt fed to iteration i
+
+        Compute and write:
+        1. Input gradient in f"{mutable_grad_input_dir}":
+           How should each iteration's LLM output change to improve the final result?
+        2. For the winning iteration: write improved text directly.
+        3. For failed iterations: write text that would help the retry loop
+           converge faster (e.g., more precise output that passes validation sooner).
+        4. For unreached iterations: leave as TODO.
+
+        Replace all TODO with improved content.
+    ''')
+
+recurrent_backward :=
+    $grad_input Symbolic[torch.Tensor[($prefix_dims ..., $recurrent_dim int)]]
+    <- $grad_output Symbolic[torch.Tensor[($prefix_dims ...)]]
+    # saved from forward ctx
+    <- $input Symbolic[torch.Tensor[($prefix_dims ..., $recurrent_dim int)]]
+    <- $output Symbolic[torch.Tensor[($prefix_dims ...)]]
+    <- $prompt_tensor Symbolic[torch.Tensor[($prefix_dims ..., $recurrent_dim int)]]
+    <- $topk_self_confidence_but_failed int # default 8. reflect on high self-confidence yet failed cases.
+    <- $grad_input_prompt BackwardPromptCallable # default None
+    <- $task_prompt str # default ""
+    <- $llm_method ("coding_agent" | "raw_llm_api") # default raw_llm_api
+    <- $llm_env dict[str, str] # default None
+    # inline
+    <- ($grad_input
+        <- Import[experience/symbolic_tensor/tensor_util/todo_tensor_like.viba]
+        <- $input)
+    <- $slice_view Import[experience/symbolic_tensor/tensor_util/slice_view.viba]
+    <- $slice_tensor Import[experience/symbolic_tensor/tensor_util/slice_tensor.viba]
+    <- $dump_view Import[experience/symbolic_tensor/tensor_util/dump_view.viba]
+
+    # ── Numeric channel (coefficient) ──
+    # Per-element status-aware coefficient propagation.
+    # For each [*prefix, i]:
+    #   input_status = convert_float_to_status(input.data[*prefix, i])
+    #   match input_status:
+    #     confidence | kConfidenceNotBounded (winning iteration):
+    #       grad_input.data[*prefix, i] = grad_output.data[*prefix]
+    #     self_confidence_but_failed (losing iteration):
+    #       if this was the best (output is scyf and values match):
+    #         grad_input.data[*prefix, i] = grad_output.data[*prefix]
+    #       else:
+    #         grad_input.data[*prefix, i] = -input_status.value (attenuated)
+    #     kContextOverflow | unreached (coeff == 0):
+    #       grad_input.data[*prefix, i] = 0
+    <- (NestedList[$scalar_input_coeff float] <- $input.data)
+    <- (NestedList[$scalar_input_status Status]
+        <- Status.convert_float_to_status <- $scalar_input_coeff)
+    <- (NestedList[$scalar_output_coeff float] <- $output.data <- broadcast_prefix)
+    <- (NestedList[$scalar_output_status Status]
+        <- Status.convert_float_to_status <- $scalar_output_coeff)
+    <- (NestedList[$scalar_grad_output_coeff float] <- $grad_output.data <- broadcast_prefix)
+    <- (NestedList[$grad_input_coeff float]
+        <- { match $scalar_input_status }
+        <- { case confidence | kConfidenceNotBounded: $scalar_grad_output_coeff }
+        <- { case self_confidence_but_failed:
+             if scalar_input_status.value is in topk_self_confidence_but_failed cases:
+                # It's weird that trials had high self-confidence but failed. So reflect on them.
+                $scalar_grad_output_coeff
+             else:
+                Status.convert_status_to_float($scalar_input_status) }
+        <- { case kContextOverflow: 0.0 }
+        <- { case unreached (coeff == 0): 0.0 })
+    <- ($grad_input.data <- $grad_input_coeff)
+
+    # ── Symbolic channel (text diff) ──
+    # Per scalar element in input shape (*prefix, recurrent_dim):
+    # slice all relevant tensors to scalar views
+    <- (NestedList[$scalar_input Symbolic[torch.Tensor]] <- NestedList[$slice_view] <- $input)
+    <- (NestedList[$scalar_prompt Symbolic[torch.Tensor]] <- NestedList[$slice_view] <- $prompt_tensor)
+    <- (NestedList[$scalar_grad_input_view Symbolic[torch.Tensor]]
+        <- NestedList[$slice_view] <- $grad_input)
+    <- (NestedList[$scalar_grad_input_value Symbolic[torch.Tensor]]
+        <- NestedList[$slice_tensor] <- $grad_input)
+    # grad_output and output have prefix shape — broadcast to (*prefix, recurrent_dim)
+    # by slicing with prefix coords only (drop recurrent dim index)
+    <- (NestedList[$scalar_grad_output Symbolic[torch.Tensor]]
+        <- NestedList[$slice_view] <- $grad_output <- broadcast_prefix)
+    <- (NestedList[$scalar_output Symbolic[torch.Tensor]]
+        <- NestedList[$slice_view] <- $output <- broadcast_prefix)
+
+    # Per-element workspace + AgentTask construction
+    <- (NestedList[$workspace_dir] <- NestedList[TemporaryDirectory])
+    # dump const views (read-only context for LLM)
+    <- (NestedList[void] <- $dump_view <- $scalar_grad_output <- f"{workspace_dir}/const_grad_output_view")
+    <- (NestedList[void] <- $dump_view <- $scalar_input <- f"{workspace_dir}/const_input_view")
+    <- (NestedList[void] <- $dump_view <- $scalar_output <- f"{workspace_dir}/const_output_view")
+    <- (NestedList[void] <- $dump_view <- $scalar_prompt <- f"{workspace_dir}/const_prompt_view")
+    # dump mutable (LLM writes improved input here)
+    <- (NestedList[void] <- $dump_view <- $scalar_grad_input_value
+        <- f"{workspace_dir}/mutable_grad_input_dir")
+    <- (NestedList[$prompt str]
+        <- ($grad_input_prompt | default_prompt_for_recurrent_grad_input)
+        <- $task_prompt
+        <- $workspace_dir
+        <- f"{workspace_dir}/const_grad_output_view"
+        <- f"{workspace_dir}/const_input_view"
+        <- f"{workspace_dir}/const_output_view"
+        <- f"{workspace_dir}/const_prompt_view"
+        <- f"{workspace_dir}/mutable_grad_input_dir")
+    # Skip AgentTask for unreached / overflow elements (coeff == 0)
+    <- (NestedList[$agent_task Optional[AgentTask]]
+        <- If[$grad_input_coeff != 0.0]
+        <- AgentTask <- $workspace_dir <- "mutable_grad_input_dir" <- $prompt
+        <- Else[None])
+
+    # ── Single TaskHandler call with all tasks ──
+    <- ($all_tasks list[AgentTask]
+        <- flatten <- filter_none <- NestedList[$agent_task])
+    <- (void <- Import[experience/llm_client/task_handler.viba]
+        <- $all_tasks <- $llm_method <- $llm_env)
+
+    # ── Final stage: uniform diff + assign for all elements ──
+    <- (NestedList[$diff] <- $scalar_input.st_get_diff <- $scalar_grad_input_value)
+    <- (NestedList[void] <- $scalar_grad_input_view.st_assign <- $diff)
+
+AgentTask := Import[experience/llm_client/agent_task.viba]

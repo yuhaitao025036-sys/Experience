@@ -27,7 +27,7 @@ recurrent_forward_async_get :=
     <- { case Status.kConfidenceNotBounded:  return (cur_output, Status.confidence(1.0)) }
     <- { case Status.kContextOverflow: return ("", Status.kContextOverflow) }
     <- {
-        case Status.self_confidence_yet_failed:
+        case Status.self_confidence_but_failed:
         # for next iteration
         if i is not last element:
             prompt_tensor.st_setitem([*cooridates, i+1], (
@@ -38,8 +38,8 @@ recurrent_forward_async_get :=
     }
     <- {
         if all trials failed:
-            return ($cur_output, cur_output_status.self_confidence_yet_failed)
-            where cur_output_status.self_confidence_yet_failed is the max
+            return ($cur_output, cur_output_status.self_confidence_but_failed)
+            where cur_output_status.self_confidence_but_failed is the max
      }
 """
 
@@ -64,8 +64,8 @@ def recurrent_forward(input: FutureTensor) -> Tuple[FutureTensor, FutureTensor]:
         - confidence: return immediately (success)
         - kConfidenceNotBounded: return with confidence(1.0)
         - kContextOverflow: return ("", kContextOverflow)
-        - self_confidence_yet_failed: accumulate prompt, try next i
-    If all iterations fail, returns best (by self_confidence_yet_failed value).
+        - self_confidence_but_failed: accumulate prompt, try next i
+    If all iterations fail, returns best (by self_confidence_but_failed value).
 
     Args:
         input: FutureTensor of shape (*prefix_dims, recurrent_dim).
@@ -118,7 +118,7 @@ def recurrent_forward(input: FutureTensor) -> Tuple[FutureTensor, FutureTensor]:
             if cur_output_status.is_kContextOverflow:
                 return ("", Status.kContextOverflow)
 
-            # self_confidence_yet_failed case
+            # self_confidence_but_failed case
             if cur_output_status.value > best_scyf_value:
                 best_scyf_value = cur_output_status.value
                 best_output = cur_output
@@ -232,7 +232,7 @@ if __name__ == "__main__":
             call_log.append((list(coords), prompt))
             i = coords[-1]
             if i == 0:
-                return ("bad_output", Status.self_confidence_yet_failed(0.3))
+                return ("bad_output", Status.self_confidence_but_failed(0.3))
             if i == 1:
                 return ("good_output", Status.confidence(0.95))
             return ("???", Status.confidence(0.0))
@@ -261,8 +261,8 @@ if __name__ == "__main__":
         # Ok on third try (recurrent_dim=3)
         async def ok_on_third(coords, prompt):
             i = coords[-1]
-            if i == 0: return ("out0", Status.self_confidence_yet_failed(0.3))
-            if i == 1: return ("out1", Status.self_confidence_yet_failed(0.4))
+            if i == 0: return ("out0", Status.self_confidence_but_failed(0.3))
+            if i == 1: return ("out1", Status.self_confidence_but_failed(0.4))
             if i == 2: return ("out2", Status.confidence(0.9))
             return ("???", Status.confidence(0.0))
 
@@ -281,7 +281,7 @@ if __name__ == "__main__":
             prompts_seen.append(prompt)
             i = coords[-1]
             if i < 2:
-                return (f"gen_{i}", Status.self_confidence_yet_failed(0.5))
+                return (f"gen_{i}", Status.self_confidence_but_failed(0.5))
             return (f"gen_{i}", Status.confidence(0.8))
 
         inp = FutureTensor([3], tmpdir, capture_prompt)
@@ -298,11 +298,11 @@ if __name__ == "__main__":
     # === Group 3: All fail — best result returned (tests 26-40) ===
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        # recurrent_dim=3, all self_confidence_yet_failed
+        # recurrent_dim=3, all self_confidence_but_failed
         async def all_fail(coords, prompt):
             i = coords[-1]
             confs = [0.3, 0.7, 0.5]
-            return (f"output_{i}", Status.self_confidence_yet_failed(confs[i]))
+            return (f"output_{i}", Status.self_confidence_but_failed(confs[i]))
 
         inp = FutureTensor([3], tmpdir, all_fail)
         out, pt = recurrent_forward(inp)
@@ -311,7 +311,7 @@ if __name__ == "__main__":
 
         # Best scyf value: i=1 -> 0.7
         run_test("26: best content is output_1", read_ft_element(out, 0) == "output_1")
-        # self_confidence_yet_failed(0.7) -> convert_status_to_float -> -0.7
+        # self_confidence_but_failed(0.7) -> convert_status_to_float -> -0.7
         run_test("27: stored as -0.7",
                  abs(out.tensor.data.flatten()[0].item() - (-0.7)) < 0.02)
 
@@ -319,7 +319,7 @@ if __name__ == "__main__":
         # All fail, best is last iteration
         async def best_last(coords, prompt):
             i = coords[-1]
-            return (f"out_{i}", Status.self_confidence_yet_failed(0.1 * (i + 1)))
+            return (f"out_{i}", Status.self_confidence_but_failed(0.1 * (i + 1)))
 
         inp = FutureTensor([3], tmpdir, best_last)
         out, pt = recurrent_forward(inp)
@@ -335,7 +335,7 @@ if __name__ == "__main__":
         async def best_first(coords, prompt):
             i = coords[-1]
             confs = [0.9, 0.2, 0.1]
-            return (f"out_{i}", Status.self_confidence_yet_failed(confs[i]))
+            return (f"out_{i}", Status.self_confidence_but_failed(confs[i]))
 
         inp = FutureTensor([3], tmpdir, best_first)
         out, pt = recurrent_forward(inp)
@@ -348,7 +348,7 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmpdir:
         # recurrent_dim=1, single fail
         async def single_fail(coords, prompt):
-            return ("only_out", Status.self_confidence_yet_failed(0.6))
+            return ("only_out", Status.self_confidence_but_failed(0.6))
 
         inp = FutureTensor([1], tmpdir, single_fail)
         out, pt = recurrent_forward(inp)
@@ -362,7 +362,7 @@ if __name__ == "__main__":
         # recurrent_dim=2, tied scyf — first one wins (strictly >)
         async def tied(coords, prompt):
             i = coords[-1]
-            return (f"out_{i}", Status.self_confidence_yet_failed(0.5))
+            return (f"out_{i}", Status.self_confidence_but_failed(0.5))
 
         inp = FutureTensor([2], tmpdir, tied)
         out, pt = recurrent_forward(inp)
@@ -417,7 +417,7 @@ if __name__ == "__main__":
             key = tuple(coords)
             prompts_seen.setdefault(key, []).append(prompt)
             i = coords[-1]
-            return (f"gen_{i}", Status.self_confidence_yet_failed(0.5))
+            return (f"gen_{i}", Status.self_confidence_but_failed(0.5))
 
         inp = FutureTensor([3], tmpdir, capture_all)
         out, pt = recurrent_forward(inp)
@@ -443,7 +443,7 @@ if __name__ == "__main__":
         async def simple_retry(coords, prompt):
             i = coords[-1]
             if i == 0:
-                return ("bad", Status.self_confidence_yet_failed(0.3))
+                return ("bad", Status.self_confidence_but_failed(0.3))
             return ("good", Status.confidence(0.9))
 
         inp = FutureTensor([2], tmpdir, simple_retry)
@@ -484,7 +484,7 @@ if __name__ == "__main__":
         async def multi_elem(coords, prompt):
             prefix, i = coords
             if i == 0:
-                return (f"p{prefix}_bad", Status.self_confidence_yet_failed(0.3))
+                return (f"p{prefix}_bad", Status.self_confidence_but_failed(0.3))
             else:
                 return (f"p{prefix}_good", Status.confidence(0.9))
 
@@ -528,7 +528,7 @@ if __name__ == "__main__":
             ok_at = [0, 2, 1, -1]  # elem 3 never ok
             if i == ok_at[prefix]:
                 return (f"e{prefix}_i{i}", Status.confidence(0.9))
-            return (f"e{prefix}_i{i}", Status.self_confidence_yet_failed(0.3 + i * 0.1))
+            return (f"e{prefix}_i{i}", Status.self_confidence_but_failed(0.3 + i * 0.1))
 
         inp = FutureTensor([4, 3], tmpdir, mixed_per_elem)
         out, pt = recurrent_forward(inp)
@@ -561,7 +561,7 @@ if __name__ == "__main__":
 
     with tempfile.TemporaryDirectory() as tmpdir:
         async def single_err(coords, prompt):
-            return ("result", Status.self_confidence_yet_failed(0.7))
+            return ("result", Status.self_confidence_but_failed(0.7))
 
         inp = FutureTensor([1], tmpdir, single_err)
         out, pt = recurrent_forward(inp)
@@ -577,7 +577,7 @@ if __name__ == "__main__":
             i = coords[-1]
             if i == 4:
                 return (f"out_{i}", Status.confidence(0.8))
-            return (f"out_{i}", Status.self_confidence_yet_failed(0.1 * (i + 1)))
+            return (f"out_{i}", Status.self_confidence_but_failed(0.1 * (i + 1)))
 
         inp = FutureTensor([5], tmpdir, dim5)
         out, pt = recurrent_forward(inp)
@@ -593,7 +593,7 @@ if __name__ == "__main__":
             i = coords[-1]
             if "FIXED" in prompt:
                 return (f"gen_{i}", Status.confidence(0.9))
-            return (f"gen_{i}", Status.self_confidence_yet_failed(0.5))
+            return (f"gen_{i}", Status.self_confidence_but_failed(0.5))
 
         inp = FutureTensor([2], tmpdir, prompt_dependent)
         out, pt = recurrent_forward(inp)
@@ -610,7 +610,7 @@ if __name__ == "__main__":
             i = coords[-1]
             if "FIXED" in prompt:
                 return (f"gen_{i}", Status.confidence(0.9))
-            return (f"gen_{i}_with_FIXED", Status.self_confidence_yet_failed(0.5))
+            return (f"gen_{i}_with_FIXED", Status.self_confidence_but_failed(0.5))
 
         inp = FutureTensor([2], tmpdir, prompt_dependent2)
         out, pt = recurrent_forward(inp)
@@ -627,7 +627,7 @@ if __name__ == "__main__":
         async def prompt_dependent3(coords, prompt):
             if "FIXED" in prompt:
                 return ("gen", Status.confidence(0.9))
-            return ("gen", Status.self_confidence_yet_failed(0.5))
+            return ("gen", Status.self_confidence_but_failed(0.5))
 
         inp = FutureTensor([2], tmpdir, prompt_dependent3)
         out, pt = recurrent_forward(inp)
@@ -699,7 +699,7 @@ if __name__ == "__main__":
         async def big_get(coords, prompt):
             r, c, i = coords
             if i == 0:
-                return (f"r{r}c{c}_i0", Status.self_confidence_yet_failed(0.3))
+                return (f"r{r}c{c}_i0", Status.self_confidence_but_failed(0.3))
             return (f"r{r}c{c}_i1", Status.confidence(0.8))
 
         inp = FutureTensor([3, 3, 2], tmpdir, big_get)

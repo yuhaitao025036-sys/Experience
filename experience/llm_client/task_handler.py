@@ -1,7 +1,4 @@
 from experience.llm_client.agent_task import AgentTask
-from experience.llm_client.coding_agent_task_handler import CodingAgentTaskHandler
-from experience.llm_client.raw_llm_task_handler import RawLlmTaskHandler
-from experience.llm_client.tmux_cc_task_handler import TmuxCcTaskHandler
 import time
 import sys
 from typing import Dict, Optional
@@ -28,10 +25,13 @@ class TaskHandler:
         """
         start = time.time()
         if llm_method == "coding_agent":
+            from experience.llm_client.coding_agent_task_handler import CodingAgentTaskHandler
             CodingAgentTaskHandler()(all_tasks, llm_env=llm_env)
         elif llm_method == "raw_llm_api":
+            from experience.llm_client.raw_llm_task_handler import RawLlmTaskHandler
             RawLlmTaskHandler()(all_tasks, llm_env=llm_env)
         elif llm_method == "tmux_cc":
+            from experience.llm_client.tmux_cc_task_handler import TmuxCcTaskHandler
             TmuxCcTaskHandler()(
                 all_tasks,
                 llm_env=llm_env,

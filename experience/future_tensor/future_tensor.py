@@ -418,7 +418,7 @@ if __name__ == "__main__":
             if coordinates == [0]:
                 return ("over", Status.confidence(0.9))
             elif coordinates == [1]:
-                return ("failed", Status.self_confidence_yet_failed(0.6))
+                return ("failed", Status.self_confidence_but_failed(0.6))
             else:
                 return ("normal", Status.confidence(0.7))
 
@@ -428,7 +428,7 @@ if __name__ == "__main__":
 
         run_test("confidence(0.9) -> 0.9",
                  abs(ft.tensor.data.flatten()[0].item() - 0.9) < 0.01)
-        run_test("self_confidence_yet_failed(0.6) -> -0.6",
+        run_test("self_confidence_but_failed(0.6) -> -0.6",
                  abs(ft.tensor.data.flatten()[1].item() - (-0.6)) < 0.01)
         run_test("confidence(0.7) -> 0.7",
                  abs(ft.tensor.data.flatten()[2].item() - 0.7) < 0.01)

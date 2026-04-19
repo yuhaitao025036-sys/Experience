@@ -2,7 +2,7 @@
 Status :=
     Oneof
     | $confidence Bounded0To1[float]
-    | $self_confidence_yet_failed Bounded0To1Exclude0[float]
+    | $self_confidence_but_failed Bounded0To1Exclude0[float]
     | $kConfidenceNotBounded 2
     | $kContextOverflow 3
 
@@ -12,7 +12,7 @@ Status.convert_status_to_float :=
     # inline
     <- { match status }
     <- { case $confidence: return confidence }
-    <- { case $self_confidence_yet_failed: return -self_confidence_yet_failed }
+    <- { case $self_confidence_but_failed: return -self_confidence_but_failed }
     <- { otherwise $errno: return -enum_value(errno)}
 
 Status.convert_float_to_status :=
@@ -30,7 +30,7 @@ class Status:
 
     Variants:
         confidence(float)              — success, value in [0.0, 1.0]
-        self_confidence_yet_failed(float) — failed with self-assessed confidence, value in (0.0, 1.0]
+        self_confidence_but_failed(float) — failed with self-assessed confidence, value in (0.0, 1.0]
         kConfidenceNotBounded          — error: confidence not in range (enum value 2)
         kContextOverflow               — error: context too long (enum value 3)
     """
@@ -53,10 +53,10 @@ class Status:
         return Status("confidence", v)
 
     @staticmethod
-    def self_confidence_yet_failed(value: float) -> "Status":
-        """Create a self_confidence_yet_failed status. Value clamped to (0.0, 1.0]."""
+    def self_confidence_but_failed(value: float) -> "Status":
+        """Create a self_confidence_but_failed status. Value clamped to (0.0, 1.0]."""
         v = max(1e-10, min(1.0, value))
-        return Status("self_confidence_yet_failed", v)
+        return Status("self_confidence_but_failed", v)
 
     @property
     def tag(self) -> str:
@@ -71,8 +71,8 @@ class Status:
         return self._tag == "confidence"
 
     @property
-    def is_self_confidence_yet_failed(self) -> bool:
-        return self._tag == "self_confidence_yet_failed"
+    def is_self_confidence_but_failed(self) -> bool:
+        return self._tag == "self_confidence_but_failed"
 
     @property
     def is_kConfidenceNotBounded(self) -> bool:
@@ -87,13 +87,13 @@ class Status:
         """Convert Status to float for tensor storage.
 
         confidence             →  value       (0.0 to 1.0)
-        self_confidence_yet_failed → -value   (-1.0 to ~0.0)
+        self_confidence_but_failed → -value   (-1.0 to ~0.0)
         kConfidenceNotBounded  → -2.0
         kContextOverflow       → -3.0
         """
         if status._tag == "confidence":
             return status._value
-        if status._tag == "self_confidence_yet_failed":
+        if status._tag == "self_confidence_but_failed":
             return -status._value
         if status._tag == "kConfidenceNotBounded":
             return -float(Status._ENUM_CONFIDENCE_NOT_BOUNDED)
@@ -106,7 +106,7 @@ class Status:
         """Reverse of convert_status_to_float.
 
         [0.0, 1.0]    → confidence
-        (-1.0, ~0.0)  → self_confidence_yet_failed (negate)
+        (-1.0, ~0.0)  → self_confidence_but_failed (negate)
         -2.0           → kConfidenceNotBounded
         -3.0           → kContextOverflow
         """
@@ -116,11 +116,11 @@ class Status:
             return Status("kConfidenceNotBounded", float(Status._ENUM_CONFIDENCE_NOT_BOUNDED))
         if value == -float(Status._ENUM_CONTEXT_OVERFLOW):
             return Status("kContextOverflow", float(Status._ENUM_CONTEXT_OVERFLOW))
-        # Negative but not an enum sentinel → self_confidence_yet_failed
-        return Status.self_confidence_yet_failed(-value)
+        # Negative but not an enum sentinel → self_confidence_but_failed
+        return Status.self_confidence_but_failed(-value)
 
     def __repr__(self) -> str:
-        if self._tag in ("confidence", "self_confidence_yet_failed"):
+        if self._tag in ("confidence", "self_confidence_but_failed"):
             return f"Status.{self._tag}({self._value})"
         return f"Status.{self._tag}"
 
@@ -153,9 +153,9 @@ if __name__ == "__main__":
     run_test("confidence is_confidence", s.is_confidence)
     run_test("confidence to_float", abs(Status.convert_status_to_float(s) - 0.8) < 0.01)
 
-    # self_confidence_yet_failed
-    s = Status.self_confidence_yet_failed(0.6)
-    run_test("scyf tag", s.tag == "self_confidence_yet_failed")
+    # self_confidence_but_failed
+    s = Status.self_confidence_but_failed(0.6)
+    run_test("scyf tag", s.tag == "self_confidence_but_failed")
     run_test("scyf value", abs(s.value - 0.6) < 0.01)
     run_test("scyf to_float", abs(Status.convert_status_to_float(s) - (-0.6)) < 0.01)
 
@@ -173,7 +173,7 @@ if __name__ == "__main__":
         run_test(f"roundtrip confidence({val})", s == s2)
 
     for val in [0.1, 0.5, 1.0]:
-        s = Status.self_confidence_yet_failed(val)
+        s = Status.self_confidence_but_failed(val)
         f = Status.convert_status_to_float(s)
         s2 = Status.convert_float_to_status(f)
         run_test(f"roundtrip scyf({val})", s == s2)

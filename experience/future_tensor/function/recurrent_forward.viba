@@ -26,7 +26,7 @@ recurrent_forward_async_get :=
     <- { case Status.kConfidenceNotBounded:  return (cur_output, Status.confidence(1.0)) }
     <- { case Status.kContextOverflow: return ("", Status.kContextOverflow) }
     <- {
-        case Status.self_confidence_yet_failed:
+        case Status.self_confidence_but_failed:
         # for next iteration
         if i is not last element:
             prompt_tensor.st_setitem([*cooridates, i+1], (
@@ -37,6 +37,6 @@ recurrent_forward_async_get :=
     }
     <- {
         if all trials failed:
-            return ($cur_output, cur_output_status.self_confidence_yet_failed)
-            where cur_output_status.self_confidence_yet_failed is the max
+            return ($cur_output, cur_output_status.self_confidence_but_failed)
+            where cur_output_status.self_confidence_but_failed is the max
      }
