@@ -1,42 +1,91 @@
+
+# Recurrent forward: retry loop encoded in tensor dimensions.
+#
+# input shape: (*prefix_dims, recurrent_dim)
+# output shape: (*prefix_dims)          — the winning (or best-of) result
+# prompt_tensor shape: (*prefix_dims, recurrent_dim) — accumulated prompts per iteration
+#
+# For each prefix coordinate, iterates i in range(recurrent_dim):
+#   - Calls input.ft_async_get([*prefix_coords, i], cur_prompt)
+#   - Dispatches on Status:
+#     - confidence: return immediately (success)
+#     - kConfidenceNotBounded: return with confidence(1.0)
+#     - kContextOverflow: return ("", kContextOverflow)
+#     - self_confidence_but_failed: accumulate prompt, try next i
+# If all iterations fail, returns best (by self_confidence_but_failed value).
+
+Status := Import[{future_tensor status.viba}].Status
+
 recurrent_forward :=
     ($output FutureTensor[($prefix_dims ...)],
      $prompt_tensor FutureTensor[($prefix_dims ..., $recurrent_dim int)])
     <- $input FutureTensor[($prefix_dims ..., $recurrent_dim int)]
+    <- $get_next_iter_prompt GetNextIterPromptCallable # default None
     # inline
-    <- { prompt_tensor = future tensor of none_like(input) }
+    <- ($recurrent_dim int <- $input.shape[-1])
+    <- ($prefix_shape list[int] <- $input.shape[:-1])
+    <- { prompt_tensor = FutureTensor(input.shape, input.st_relative_to, ft_async_get=None) }
     <- $output.ft_async_get recurrent_forward_async_get
 
 recurrent_forward_async_get :=
-    Awaitable[(str, float)]
-    <- $cooridates list[int]
+    Awaitable[(str, Status)]
+    <- $coordinates list[int]  # prefix coordinates only (len = len(prefix_dims))
     <- $prompt str
-    # captured args
+    # captured from recurrent_forward closure
     <- $input FutureTensor[($prefix_dims ..., $recurrent_dim int)]
     <- $prompt_tensor FutureTensor[($prefix_dims ..., $recurrent_dim int)]
+    <- $recurrent_dim int
+    <- $get_next_iter_prompt GetNextIterPromptCallable # default None
     # inline
-    <- { prompt_tensor.st_setitem([*cooridates, 0], prompt) }
-    <- (Loop[$i int] <- range <- $recurrent_dim)
-    <- { cur_prompt = prompt_tensor[*cooridates, i] }
+    # 1. Store initial prompt into prompt_tensor at [*coordinates, 0]
+    <- { prompt_tensor.st_setitem([*coordinates, 0], prompt) }
+    # 2. Track best self_confidence_but_failed result
+    <- { best_output = "", best_status = None, best_scbf_value = -1.0 }
+    # 3. Sequential retry loop
+    <- (Loop[$i int] <- range($recurrent_dim))
+    <- { cur_prompt = read prompt_tensor[*coordinates, i] }
+    # 4. Call upstream ft_async_get with recurrent coordinate appended
     <- (($cur_output str, $cur_output_status Status)
-        <- $input.ft_async_get 
-        <- {[*cooridates, i]}
+        <- await $input.ft_async_get
+        <- [*coordinates, i]
         <- cur_prompt)
+    # 5. Dispatch on status
     <- { match cur_output_status }
-    <- { case Status.confidence: return (cur_output, cur_output_status) }
-    <- { case Status.kConfidenceNotBounded:  return (cur_output, Status.confidence(1.0)) }
-    <- { case Status.kContextOverflow: return ("", Status.kContextOverflow) }
+    <- { case Status.confidence:
+         return (cur_output, cur_output_status) }
+    <- { case Status.kConfidenceNotBounded:
+         return (cur_output, Status.confidence(1.0)) }
+    <- { case Status.kContextOverflow:
+         return ("", Status.kContextOverflow) }
     <- {
         case Status.self_confidence_but_failed:
-        # for next iteration
-        if i is not last element:
-            prompt_tensor.st_setitem([*cooridates, i+1], (
-                f"{cur_prompt}\n"
-                f"====[Iteration {i}]====\n"
-                f"Output:\n\n{cur_output}\n\n"
-            ))
+        # Track best result
+        if cur_output_status.value > best_scbf_value:
+            best_scbf_value = cur_output_status.value
+            best_output = cur_output
+            best_status = cur_output_status
+        # Build accumulated prompt for next iteration
+        if i < recurrent_dim - 1:
+            if get_next_iter_prompt is not None:
+                next_prompt = await get_next_iter_prompt(cur_prompt, cur_output, cur_output_status)
+            else:
+                next_prompt = default_next_iter_prompt(cur_prompt, cur_output, i)
+            prompt_tensor.st_setitem([*coordinates, i+1], next_prompt)
     }
-    <- {
-        if all trials failed:
-            return ($cur_output, cur_output_status.self_confidence_but_failed)
-            where cur_output_status.self_confidence_but_failed is the max
-     }
+    # 6. All trials exhausted — return best self_confidence_but_failed
+    <- { return (best_output, best_status) }
+
+# Default prompt accumulation: append iteration output to prompt history
+default_next_iter_prompt :=
+    $next_prompt str
+    <- $cur_prompt str
+    <- $cur_output str
+    <- $iteration int
+    # inline
+    <- ($next_prompt <- f"{cur_prompt}\n====[Iteration {iteration}]====\nOutput:\n\n{cur_output}\n\n")
+
+# Callable type for custom prompt accumulation between iterations
+GetNextIterPromptCallable := $func (Awaitable[$ret str]
+    <- $cur_prompt str
+    <- $cur_output str
+    <- $cur_output_status Status)

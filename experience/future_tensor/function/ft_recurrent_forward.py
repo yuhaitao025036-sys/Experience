@@ -3,55 +3,41 @@ recurrent_forward :=
     ($output FutureTensor[($prefix_dims ...)],
      $prompt_tensor FutureTensor[($prefix_dims ..., $recurrent_dim int)])
     <- $input FutureTensor[($prefix_dims ..., $recurrent_dim int)]
+    <- $get_next_iter_prompt GetNextIterPromptCallable # default None
     # inline
-    <- { prompt_tensor = future tensor of none_like(input) }
+    <- ($recurrent_dim int <- $input.shape[-1])
+    <- ($prefix_shape list[int] <- $input.shape[:-1])
+    <- { prompt_tensor = FutureTensor(input.shape, input.st_relative_to, ft_async_get=None) }
     <- $output.ft_async_get recurrent_forward_async_get
 
-recurrent_forward_async_get :=
-    Awaitable[(str, float)]
-    <- $cooridates list[int]
-    <- $prompt str
-    # captured args
-    <- $input FutureTensor[($prefix_dims ..., $recurrent_dim int)]
-    <- $prompt_tensor FutureTensor[($prefix_dims ..., $recurrent_dim int)]
-    # inline
-    <- { prompt_tensor.st_setitem([*cooridates, 0], prompt) }
-    <- (Loop[$i int] <- range <- $recurrent_dim)
-    <- { cur_prompt = prompt_tensor[*cooridates, i] }
-    <- (($cur_output str, $cur_output_status Status)
-        <- $input.ft_async_get
-        <- {[*cooridates, i]}
-        <- cur_prompt)
-    <- { match cur_output_status }
-    <- { case Status.confidence: return (cur_output, cur_output_status) }
-    <- { case Status.kConfidenceNotBounded:  return (cur_output, Status.confidence(1.0)) }
-    <- { case Status.kContextOverflow: return ("", Status.kContextOverflow) }
-    <- {
-        case Status.self_confidence_but_failed:
-        # for next iteration
-        if i is not last element:
-            prompt_tensor.st_setitem([*cooridates, i+1], (
-                f"{cur_prompt}\\n"
-                f"====[Iteration {i}]====\\n"
-                f"Output:\\n\\n{cur_output}\\n\\n"
-            ))
-    }
-    <- {
-        if all trials failed:
-            return ($cur_output, cur_output_status.self_confidence_but_failed)
-            where cur_output_status.self_confidence_but_failed is the max
-     }
+GetNextIterPromptCallable := $func (Awaitable[$ret str]
+    <- $cur_prompt str <- $cur_output str <- $cur_output_status Status)
 """
 
 import os
-from typing import List, Tuple
+from typing import Awaitable, Callable, List, Optional, Tuple
 
 from experience.future_tensor.future_tensor import FutureTensor, _read_element, _coords_to_flat
 from experience.future_tensor.status import Status
 from experience.symbolic_tensor.tensor_util.st_setitem import st_setitem
 
+# Type alias for custom prompt accumulation callback
+GetNextIterPromptCallable = Callable[..., Awaitable[str]]
 
-def recurrent_forward(input: FutureTensor) -> Tuple[FutureTensor, FutureTensor]:
+
+def default_next_iter_prompt(cur_prompt: str, cur_output: str, iteration: int) -> str:
+    """Default prompt accumulation: append iteration output to prompt history."""
+    return (
+        f"{cur_prompt}\n"
+        f"====[Iteration {iteration}]====\n"
+        f"Output:\n\n{cur_output}\n\n"
+    )
+
+
+def recurrent_forward(
+    input: FutureTensor,
+    get_next_iter_prompt: Optional[GetNextIterPromptCallable] = None,
+) -> Tuple[FutureTensor, FutureTensor]:
     """Recurrent forward: retry loop encoded in tensor dimensions.
 
     Takes input of shape (*prefix_dims, recurrent_dim) where the last dim
@@ -69,6 +55,9 @@ def recurrent_forward(input: FutureTensor) -> Tuple[FutureTensor, FutureTensor]:
 
     Args:
         input: FutureTensor of shape (*prefix_dims, recurrent_dim).
+        get_next_iter_prompt: Optional async callable to build next iteration's
+            prompt. Signature: (cur_prompt, cur_output, cur_output_status) -> str.
+            If None, uses default_next_iter_prompt.
 
     Returns:
         (output, prompt_tensor) tuple of FutureTensors.
@@ -126,11 +115,14 @@ def recurrent_forward(input: FutureTensor) -> Tuple[FutureTensor, FutureTensor]:
 
             # Write accumulated prompt for next iteration
             if i < recurrent_dim - 1:
-                accumulated = (
-                    f"{cur_prompt}\n"
-                    f"====[Iteration {i}]====\n"
-                    f"Output:\n\n{cur_output}\n\n"
-                )
+                if get_next_iter_prompt is not None:
+                    accumulated = await get_next_iter_prompt(
+                        cur_prompt, cur_output, cur_output_status,
+                    )
+                else:
+                    accumulated = default_next_iter_prompt(
+                        cur_prompt, cur_output, i,
+                    )
                 st_setitem(prompt_tensor._tensor, [*coordinates, i + 1], accumulated)
 
         # All trials failed — return best
