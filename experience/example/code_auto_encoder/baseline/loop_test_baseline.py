@@ -17,9 +17,9 @@ import argparse
 
 # Add parent path for imports when running as script
 if __name__ == "__main__":
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
 
-from experience.example.code_auto_encoder.test_baseline import test_baseline
+from experience.example.code_auto_encoder.baseline.test_baseline import test_baseline
 
 
 def loop_test_baseline(

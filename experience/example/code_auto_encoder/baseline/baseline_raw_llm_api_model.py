@@ -17,13 +17,13 @@ import torch
 import torch.nn as nn
 
 if __name__ == "__main__":
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
 
 from experience.symbolic_tensor.function.st_stack import st_stack_forward
 from experience.symbolic_tensor.function.merge_forward import merge_forward
 from experience.symbolic_tensor.function.coding_agent import coding_agent
 
-from experience.example.code_auto_encoder.prepare_dataset import kMaskedHint
+from experience.example.code_auto_encoder.baseline.prepare_dataset import kMaskedHint
 
 
 class BaselineRawLlmApiModel(nn.Module):

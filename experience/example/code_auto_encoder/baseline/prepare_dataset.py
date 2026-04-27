@@ -652,7 +652,7 @@ def parepare_dataset(
 if __name__ == "__main__":
     import tempfile
     tmpdir = tempfile.mkdtemp()
-    dataset_dir = os.path.join(os.path.dirname(__file__), "codebase")
+    dataset_dir = os.path.join(os.path.dirname(__file__), "..", "codebase")
     paths, contents, gt, info = parepare_dataset(2, dataset_dir, tmpdir)
     print(f"Prepared {len(info)} samples")
     for i, inf in enumerate(info):

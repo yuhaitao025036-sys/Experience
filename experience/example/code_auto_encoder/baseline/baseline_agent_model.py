@@ -22,11 +22,11 @@ import torch.nn as nn
 from typing import Optional
 
 if __name__ == "__main__":
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
 
-from experience.example.code_auto_encoder.baseline_raw_llm_api_model import BaselineRawLlmApiModel
-from experience.example.code_auto_encoder.baseline_coding_agent_model import BaselineCodingAgentModel
-from experience.example.code_auto_encoder.baseline_tmux_cc_model import BaselineTmuxCcModel
+from experience.example.code_auto_encoder.baseline.baseline_raw_llm_api_model import BaselineRawLlmApiModel
+from experience.example.code_auto_encoder.baseline.baseline_coding_agent_model import BaselineCodingAgentModel
+from experience.example.code_auto_encoder.baseline.baseline_tmux_cc_model import BaselineTmuxCcModel
 
 
 class BaselineAgentModel(nn.Module):

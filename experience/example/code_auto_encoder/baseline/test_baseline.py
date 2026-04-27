@@ -27,17 +27,17 @@ from typing import Optional, List
 import torch
 
 if __name__ == "__main__":
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
 
 from experience.symbolic_tensor.function.get_edit_distance_ratio import get_edit_distance_ratio_impl
 
-from experience.example.code_auto_encoder.prepare_dataset import parepare_dataset
-from experience.example.code_auto_encoder.baseline_agent_model import BaselineAgentModel
-from experience.example.code_auto_encoder.organize_results import ExperimentTracker, print_results_summary
+from experience.example.code_auto_encoder.baseline.prepare_dataset import parepare_dataset
+from experience.example.code_auto_encoder.baseline.baseline_agent_model import BaselineAgentModel
+from experience.example.code_auto_encoder.baseline.organize_results import ExperimentTracker, print_results_summary
 
 
 # <- ($dataset_dir <- { ./codebase/ })
-CODEBASE_DIR = os.path.join(os.path.dirname(__file__), "codebase")
+CODEBASE_DIR = os.path.join(os.path.dirname(__file__), "..", "codebase")
 
 
 def _read_storage(tensor, flat_index: int) -> str:
