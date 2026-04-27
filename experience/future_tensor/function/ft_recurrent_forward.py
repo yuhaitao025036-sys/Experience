@@ -37,6 +37,7 @@ def default_next_iter_prompt(cur_prompt: str, cur_output: str, iteration: int) -
 def recurrent_forward(
     input: FutureTensor,
     get_next_iter_prompt: Optional[GetNextIterPromptCallable] = None,
+    accumulate_output: Optional[Callable[[str, str], str]] = None,
 ) -> Tuple[FutureTensor, FutureTensor]:
     """Recurrent forward: retry loop encoded in tensor dimensions.
 
@@ -58,6 +59,9 @@ def recurrent_forward(
         get_next_iter_prompt: Optional async callable to build next iteration's
             prompt. Signature: (cur_prompt, cur_output, cur_output_status) -> str.
             If None, uses default_next_iter_prompt.
+        accumulate_output: Optional callable to accumulate outputs across
+            iterations. Signature: (accumulator, cur_output) -> new_accumulator.
+            If None, uses the current iteration's output directly (identity).
 
     Returns:
         (output, prompt_tensor) tuple of FutureTensors.
@@ -86,6 +90,7 @@ def recurrent_forward(
         best_output = ""
         best_status = None
         best_scyf_value = -1.0
+        accumulator = ""
 
         for i in range(recurrent_dim):
             # Read cur_prompt from prompt_tensor[*coordinates, i]
@@ -97,12 +102,18 @@ def recurrent_forward(
                 [*coordinates, i], cur_prompt
             )
 
+            # Accumulate output if configured
+            if accumulate_output is not None:
+                accumulator = accumulate_output(accumulator, cur_output)
+            else:
+                accumulator = cur_output
+
             # Match on cur_output_status
             if cur_output_status.is_confidence:
-                return (cur_output, cur_output_status)
+                return (accumulator, cur_output_status)
 
             if cur_output_status.is_kConfidenceNotBounded:
-                return (cur_output, Status.confidence(1.0))
+                return (accumulator, Status.confidence(1.0))
 
             if cur_output_status.is_kContextOverflow:
                 return ("", Status.kContextOverflow)
@@ -125,7 +136,9 @@ def recurrent_forward(
                     )
                 st_setitem(prompt_tensor._tensor, [*coordinates, i + 1], accumulated)
 
-        # All trials failed — return best
+        # All trials failed
+        if accumulate_output is not None:
+            return (accumulator, best_status)
         return (best_output, best_status)
 
     output = FutureTensor(prefix_shape, input.st_relative_to, recurrent_forward_async_get)

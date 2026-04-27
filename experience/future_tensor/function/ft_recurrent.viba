@@ -12,4 +12,16 @@ FtRecurrent := torch.autograd.Function[
     $ctx.llm_env dict[str, str] # default None
 ]
 
-ft_recurrent := FtRecurrent.apply
+ft_recurrent :=
+    ($output FutureTensor[($prefix_dims ...)], $prompt_tensor FutureTensor[($prefix_dims ..., $recurrent_dim int)])
+    <- $input FutureTensor[($prefix_dims ..., $recurrent_dim int)]
+    <- $topk_self_confidence_but_failed int # default 8
+    <- $grad_input_prompt BackwardPromptCallable # default None
+    <- $task_prompt str # default ""
+    <- $llm_method str # default "raw_llm_api"
+    <- $llm_env dict[str, str] # default None
+    <- $accumulate_output ($ret str <- $acc str <- $cur str) # default None
+    # inline
+    <- FtRecurrent.apply <- $input <- $topk_self_confidence_but_failed
+       <- $grad_input_prompt <- $task_prompt <- $llm_method <- $llm_env
+       <- $accumulate_output

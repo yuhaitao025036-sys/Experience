@@ -21,6 +21,7 @@ recurrent_forward :=
      $prompt_tensor FutureTensor[($prefix_dims ..., $recurrent_dim int)])
     <- $input FutureTensor[($prefix_dims ..., $recurrent_dim int)]
     <- $get_next_iter_prompt GetNextIterPromptCallable # default None
+    <- $accumulate_output ($ret str <- $acc str <- $cur str) # default None
     # inline
     <- ($recurrent_dim int <- $input.shape[-1])
     <- ($prefix_shape list[int] <- $input.shape[:-1])
@@ -36,11 +37,12 @@ recurrent_forward_async_get :=
     <- $prompt_tensor FutureTensor[($prefix_dims ..., $recurrent_dim int)]
     <- $recurrent_dim int
     <- $get_next_iter_prompt GetNextIterPromptCallable # default None
+    <- $accumulate_output ($ret str <- $acc str <- $cur str) # default None
     # inline
     # 1. Store initial prompt into prompt_tensor at [*coordinates, 0]
     <- { prompt_tensor.st_setitem([*coordinates, 0], prompt) }
-    # 2. Track best self_confidence_but_failed result
-    <- { best_output = "", best_status = None, best_scbf_value = -1.0 }
+    # 2. Track best self_confidence_but_failed result and output accumulator
+    <- { best_output = "", best_status = None, best_scbf_value = -1.0, accumulator = "" }
     # 3. Sequential retry loop
     <- (Loop[$i int] <- range($recurrent_dim))
     <- { cur_prompt = read prompt_tensor[*coordinates, i] }
@@ -49,12 +51,17 @@ recurrent_forward_async_get :=
         <- await $input.ft_async_get
         <- [*coordinates, i]
         <- cur_prompt)
-    # 5. Dispatch on status
+    # 5. Accumulate output
+    <- { if accumulate_output is not None:
+             accumulator = accumulate_output(accumulator, cur_output)
+         else:
+             accumulator = cur_output }
+    # 6. Dispatch on status
     <- { match cur_output_status }
     <- { case Status.confidence:
-         return (cur_output, cur_output_status) }
+         return (accumulator, cur_output_status) }
     <- { case Status.kConfidenceNotBounded:
-         return (cur_output, Status.confidence(1.0)) }
+         return (accumulator, Status.confidence(1.0)) }
     <- { case Status.kContextOverflow:
          return ("", Status.kContextOverflow) }
     <- {
@@ -72,8 +79,11 @@ recurrent_forward_async_get :=
                 next_prompt = default_next_iter_prompt(cur_prompt, cur_output, i)
             prompt_tensor.st_setitem([*coordinates, i+1], next_prompt)
     }
-    # 6. All trials exhausted — return best self_confidence_but_failed
-    <- { return (best_output, best_status) }
+    # 7. All trials exhausted
+    <- { if accumulate_output is not None:
+             return (accumulator, best_status)
+         else:
+             return (best_output, best_status) }
 
 # Default prompt accumulation: append iteration output to prompt history
 default_next_iter_prompt :=

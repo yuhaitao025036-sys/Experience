@@ -41,8 +41,9 @@ class FtRecurrent(torch.autograd.Function):
         task_prompt: str = "",
         llm_method: str = "raw_llm_api",
         llm_env: Optional[Dict[str, str]] = None,
+        accumulate_output=None,
     ) -> Tuple[FutureTensor, FutureTensor]:
-        output, prompt_tensor = recurrent_forward(input)
+        output, prompt_tensor = recurrent_forward(input, accumulate_output=accumulate_output)
 
         # Save for backward — these are FutureTensors now, but backward will
         # use their materialized ._tensor (symbolic tensor) after ft_forward.
@@ -85,8 +86,8 @@ class FtRecurrent(torch.autograd.Function):
         )
 
         # Return grads for (input, topk_scbf, grad_input_prompt, task_prompt,
-        #                    llm_method, llm_env)
-        return grad_input, None, None, None, None, None
+        #                    llm_method, llm_env, accumulate_output)
+        return grad_input, None, None, None, None, None, None
 
 
 def ft_recurrent(
@@ -96,6 +97,7 @@ def ft_recurrent(
     task_prompt: str = "",
     llm_method: str = "raw_llm_api",
     llm_env: Optional[Dict[str, str]] = None,
+    accumulate_output=None,
 ) -> Tuple[FutureTensor, FutureTensor]:
     """Recurrent generate-validate loop with autograd support.
 
@@ -109,6 +111,9 @@ def ft_recurrent(
         task_prompt: Additional task context.
         llm_method: "coding_agent" or "raw_llm_api".
         llm_env: Optional environment variables for LLM.
+        accumulate_output: Optional callable to accumulate outputs across
+            iterations. Signature: (accumulator, cur_output) -> new_accumulator.
+            If None, uses identity (current iteration output only).
 
     Returns:
         (output, prompt_tensor):
@@ -117,7 +122,7 @@ def ft_recurrent(
     """
     return FtRecurrent.apply(
         input, topk_self_confidence_but_failed, grad_input_prompt,
-        task_prompt, llm_method, llm_env,
+        task_prompt, llm_method, llm_env, accumulate_output,
     )
 
 
