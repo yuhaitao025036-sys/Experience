@@ -28,6 +28,7 @@ from experience.llm_client.agent_config_factory import AgentConfigFactory
 from experience.example.code_auto_encoder.harness_model.function import (
     ALL_OPS,
     ALL_VALIDATORS,
+    ft_unary,
 )
 from experience.example.code_auto_encoder.harness_model.function.harness_validator_op import HarnessValidatorOp
 
@@ -124,7 +125,8 @@ class HarnessModel(nn.Module):
         self,
         experience: Optional[torch.Tensor] = None,
         max_codegen_steps: int = 4,
-        max_tool_call_retries: int = 5,
+        max_context_collects: int = 5,
+        max_tool_call_retries: int = 2,
         topk: int = 2,
         task_prompt: str = "",
         llm_method: str = "raw_llm_api",
@@ -133,6 +135,7 @@ class HarnessModel(nn.Module):
         super().__init__()
         self.experience = experience
         self.max_codegen_steps = max_codegen_steps
+        self.max_context_collects = max_context_collects
         self.max_tool_call_retries = max_tool_call_retries
         self.topk = topk
         self.task_prompt = task_prompt
@@ -146,14 +149,35 @@ class HarnessModel(nn.Module):
         tmpdir = worktree_tensor.st_relative_to
 
         # ── Stage 1: code_context_gather ──
-        ft_gather = FutureTensor(
-            [batch_size, self.max_tool_call_retries],
+        # Nested recurrent:
+        #   ft_raw [batch, C, R]
+        #   -> ft_unary(validate)
+        #   -> ft_recurrent(inner)  [batch, C]   # retry until valid tool result
+        #   -> ft_unary(check context sufficiency)
+        #   -> ft_recurrent(outer)  [batch]      # accumulate clean context across steps
+        ft_raw = FutureTensor(
+            [batch_size, self.max_context_collects, self.max_tool_call_retries],
             tmpdir,
-            self._make_code_context_gather(worktree_tensor),
+            self._make_tool_use(worktree_tensor),
+        )
+        ft_validated = ft_unary(ft_raw, self._validate_tool_result)
+
+        # Inner recurrent: retry individual tool call until valid
+        ft_tool_result, _ = ft_recurrent(
+            ft_validated,
+            task_prompt=self.task_prompt,
+            llm_method=self.llm_method,
         )
 
+        # Check context sufficiency per step
+        ft_checked = ft_unary(
+            ft_tool_result,
+            lambda c, p, o, s: self._check_context_sufficiency(c, p, o, s, worktree_tensor),
+        )
+
+        # Outer recurrent: accumulate clean context across collection steps
         context_ft, _ = ft_recurrent(
-            ft_gather,
+            ft_checked,
             accumulate_output=_concat_context,
             task_prompt=self.task_prompt,
             llm_method=self.llm_method,
@@ -183,15 +207,17 @@ class HarnessModel(nn.Module):
         return output_ft._tensor
 
     def _make_tool_use(self, worktree_tensor: torch.Tensor):
-        """Build ft_async_get for a single tool-use step.
+        """Build ft_async_get for a single raw tool-use step.
 
-        Pipeline: LLM decides tool → parse → execute → validate tool result → return trace.
-        Does NOT run the context validator; that lives in _make_code_context_gather.
+        Pipeline: LLM decides tool → parse → execute → return raw trace.
+        No validation, no context sufficiency check. Returns scbf(0.5) for all
+        non-confidence outputs so the caller can decide what to do next.
         """
 
         async def tool_use(coords: List[int], prompt: str) -> Tuple[str, Status]:
             batch_idx = coords[0]
-            retry_idx = coords[1]
+            collect_idx = coords[1]
+            retry_idx = coords[2]
 
             worktree_path = _read_element(worktree_tensor, batch_idx)
 
@@ -223,86 +249,97 @@ class HarnessModel(nn.Module):
                 f"Decide the next action."
             )
 
-            # Bootstrap: on first retry, automatically read the target file with a large window
-            if retry_idx == 0:
+            # Bootstrap: on first collect step, first retry, auto-read target file
+            if collect_idx == 0 and retry_idx == 0:
                 tool_name = "read"
                 kwargs = {"file_path": task["target_file"], "offset": 0, "limit": 200}
-                print(f"[DEBUG b{batch_idx} r{retry_idx}] bootstrap read: {kwargs}")
+                print(f"[DEBUG b{batch_idx} c{collect_idx} r{retry_idx}] bootstrap read: {kwargs}")
                 response = ""
             else:
                 response = await _call_llm(_SYSTEM_TOOL_SCHEMA, user_prompt, self.llm_method)
-                print(f"[DEBUG b{batch_idx} r{retry_idx}] LLM response: {repr(response[:120])}")
+                print(f"[DEBUG b{batch_idx} c{collect_idx} r{retry_idx}] LLM response: {repr(response[:120])}")
                 tool_name, kwargs = _parse_tool_call(response)
 
             if tool_name == "CONTEXT_SUFFICIENT":
-                print(f"[DEBUG b{batch_idx} r{retry_idx}] CONTEXT_SUFFICIENT")
+                print(f"[DEBUG b{batch_idx} c{collect_idx} r{retry_idx}] CONTEXT_SUFFICIENT")
                 return ("", Status.confidence(0.9))
 
             if tool_name not in self.ops:
                 return (
                     f"[invalid tool: {tool_name}]\n{response}",
-                    Status.self_confidence_but_failed(0.1),
+                    Status.self_confidence_but_failed(0.5),
                 )
 
-            # Execute tool
+            # Execute tool (raw, no validation here)
             result = self.ops[tool_name].forward(worktree_path, **kwargs)
+            trace = f"[{tool_name}({kwargs})]\n{result}"
+            print(f"[DEBUG b{batch_idx} c{collect_idx} r{retry_idx}] tool trace len={len(trace)}")
+            return (trace, Status.self_confidence_but_failed(0.5))
 
-            # Validate tool result
+        return tool_use
+
+    def _validate_tool_result(
+        self, coords: List[int], prompt: str, output: str, status: Status
+    ) -> Tuple[str, Status]:
+        """Pure ft_elementwise step: validate raw tool output.
+
+        Downgrades status for invalid tools or empty/error results.
+        Passes through confidence unchanged.
+        """
+        if status.is_confidence:
+            return (output, status)
+
+        if output.startswith("[invalid tool"):
+            return (output, Status.self_confidence_but_failed(0.1))
+
+        # Extract result from trace format "[tool(...)]\nresult"
+        if "\n" in output and output.startswith("["):
+            _, result = output.split("\n", 1)
             tool_validator = self.validators.get("validate_tool_result")
             if tool_validator is not None:
                 ok, msg = tool_validator.validate(result)
                 if not ok:
                     return (
-                        f"[{tool_name}({kwargs})]\nERROR: {msg}\n",
+                        f"{output}\nERROR: {msg}\n",
                         Status.self_confidence_but_failed(0.2),
                     )
 
-            trace = f"[{tool_name}({kwargs})]\n{result}"
-            print(f"[DEBUG b{batch_idx} r{retry_idx}] tool trace len={len(trace)}")
-            return (trace, Status.self_confidence_but_failed(0.5))
+        return (output, status)
 
-        return tool_use
+    def _check_context_sufficiency(
+        self,
+        coords: List[int],
+        prompt: str,
+        output: str,
+        status: Status,
+        worktree_tensor: torch.Tensor,
+    ) -> Tuple[str, Status]:
+        """Pure ft_elementwise step: check if accumulated context is sufficient.
 
-    def _make_code_context_gather(self, worktree_tensor: torch.Tensor):
-        """Build ft_async_get for context gathering stage.
-
-        Wraps _make_tool_use in an ft_recurrent loop with accumulate_output,
-        adding the context validator gate that decides when accumulated context
-        is sufficient.
+        Upgrades to confidence(0.9) when context validator passes.
+        Passes through confidence unchanged.
         """
-        tool_use = self._make_tool_use(worktree_tensor)
+        if status.is_confidence:
+            return (output, status)
 
-        async def code_context_gather(coords: List[int], prompt: str) -> Tuple[str, Status]:
-            batch_idx = coords[0]
-            retry_idx = coords[1]
+        batch_idx = coords[0]
+        collect_idx = coords[1] if len(coords) > 1 else 0
+        worktree_path = _read_element(worktree_tensor, batch_idx)
+        task_json_path = os.path.join(worktree_path, ".cloze_task.json")
+        with open(task_json_path) as f:
+            task = json.load(f)
 
-            # Run one tool-use step
-            trace, tool_status = await tool_use(coords, prompt)
+        context_validator = self._context_validator(worktree_path, task)
+        ok, cv_msg = context_validator.validate(prompt + "\n" + output)
+        print(f"[DEBUG b{batch_idx} c{collect_idx}] context_validator: ok={ok} msg={cv_msg}")
+        if ok:
+            print(f"[DEBUG b{batch_idx} c{collect_idx}] context sufficient -> confidence")
+            return (output, Status.confidence(0.9))
 
-            # If tool_use itself declared confidence (CONTEXT_SUFFICIENT), pass through
-            if tool_status.is_confidence:
-                return (trace, tool_status)
-
-            worktree_path = _read_element(worktree_tensor, batch_idx)
-            task_json_path = os.path.join(worktree_path, ".cloze_task.json")
-            with open(task_json_path) as f:
-                task = json.load(f)
-
-            # Context validator: check if accumulated context is sufficient
-            context_validator = self._context_validator(worktree_path, task)
-            ok, cv_msg = context_validator.validate(prompt + "\n" + trace)
-            print(f"[DEBUG b{batch_idx} r{retry_idx}] context_validator: ok={ok} msg={cv_msg}")
-            if ok:
-                print(f"[DEBUG b{batch_idx} r{retry_idx}] context sufficient -> confidence")
-                return (trace, Status.confidence(0.9))
-
-            return (trace, Status.self_confidence_but_failed(0.5))
-
-        return code_context_gather
+        return (output, Status.self_confidence_but_failed(0.5))
 
     def _context_validator(self, worktree_path: str, task: dict) -> HarnessValidatorOp:
-        """Build a context validator that checks if target file was READ with mask region
-        AND at least one other file was read for cross-reference."""
+        """Build a context validator that checks if target file was READ with mask region."""
         target_file = task["target_file"]
         mask_line = task.get("mask_line", 0)
         target_path = os.path.join(worktree_path, target_file)

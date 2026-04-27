@@ -33,7 +33,8 @@ def test_harness(
     seed: int = 42,
     llm_method: str = "raw_llm_api",
     max_codegen_steps: int = 4,
-    max_tool_call_retries: int = 5,
+    max_context_collects: int = 5,
+    max_tool_call_retries: int = 2,
     topk: int = 2,
     dataset_dir: Optional[str] = None,
 ) -> List[float]:
@@ -63,6 +64,7 @@ def test_harness(
     print(f"\nRunning HarnessModel (llm_method={llm_method})...")
     model = HarnessModel(
         max_codegen_steps=max_codegen_steps,
+        max_context_collects=max_context_collects,
         max_tool_call_retries=max_tool_call_retries,
         topk=topk,
         llm_method=llm_method,
@@ -100,7 +102,8 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42)")
     parser.add_argument("--llm-method", type=str, default="raw_llm_api", help="LLM method")
     parser.add_argument("--max-codegen-steps", type=int, default=4, help="Max code generation steps")
-    parser.add_argument("--max-tool-call-retries", type=int, default=5, help="Max tool call retries")
+    parser.add_argument("--max-context-collects", type=int, default=5, help="Max context collection steps")
+    parser.add_argument("--max-tool-call-retries", type=int, default=2, help="Max tool call retries per step")
     parser.add_argument("--topk", type=int, default=2, help="Top-k experience retrieval")
 
     args = parser.parse_args()
@@ -115,6 +118,7 @@ if __name__ == "__main__":
         seed=args.seed,
         llm_method=args.llm_method,
         max_codegen_steps=args.max_codegen_steps,
+        max_context_collects=args.max_context_collects,
         max_tool_call_retries=args.max_tool_call_retries,
         topk=args.topk,
     )

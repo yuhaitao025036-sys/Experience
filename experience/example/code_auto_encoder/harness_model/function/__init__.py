@@ -3,6 +3,7 @@ from .hm_glob import HmGlob
 from .hm_grep import HmGrep
 from .hm_read import HmRead
 from .hm_write import HmWrite
+from .ft_unary import ft_unary
 
 from .harness_validator_op import HarnessValidatorOp
 from .hm_validate_tool_result import HmValidateToolResult
