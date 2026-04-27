@@ -182,10 +182,14 @@ class HarnessModel(nn.Module):
         output_ft.ft_forward(gen_prompts)
         return output_ft._tensor
 
-    def _make_code_context_gather(self, worktree_tensor: torch.Tensor):
-        """Build ft_async_get for context gathering stage."""
+    def _make_tool_use(self, worktree_tensor: torch.Tensor):
+        """Build ft_async_get for a single tool-use step.
 
-        async def code_context_gather(coords: List[int], prompt: str) -> Tuple[str, Status]:
+        Pipeline: LLM decides tool → parse → execute → validate tool result → return trace.
+        Does NOT run the context validator; that lives in _make_code_context_gather.
+        """
+
+        async def tool_use(coords: List[int], prompt: str) -> Tuple[str, Status]:
             batch_idx = coords[0]
             retry_idx = coords[1]
 
@@ -196,7 +200,7 @@ class HarnessModel(nn.Module):
             with open(task_json_path) as f:
                 task = json.load(f)
 
-            # Build user prompt
+            # Build user prompt for tool selection
             already_read_target = "read(" in prompt and task["target_file"] in prompt
             if already_read_target:
                 read_hint = (
@@ -224,6 +228,7 @@ class HarnessModel(nn.Module):
                 tool_name = "read"
                 kwargs = {"file_path": task["target_file"], "offset": 0, "limit": 200}
                 print(f"[DEBUG b{batch_idx} r{retry_idx}] bootstrap read: {kwargs}")
+                response = ""
             else:
                 response = await _call_llm(_SYSTEM_TOOL_SCHEMA, user_prompt, self.llm_method)
                 print(f"[DEBUG b{batch_idx} r{retry_idx}] LLM response: {repr(response[:120])}")
@@ -254,8 +259,36 @@ class HarnessModel(nn.Module):
 
             trace = f"[{tool_name}({kwargs})]\n{result}"
             print(f"[DEBUG b{batch_idx} r{retry_idx}] tool trace len={len(trace)}")
+            return (trace, Status.self_confidence_but_failed(0.5))
 
-            # Context validator: check if we have the target file content
+        return tool_use
+
+    def _make_code_context_gather(self, worktree_tensor: torch.Tensor):
+        """Build ft_async_get for context gathering stage.
+
+        Wraps _make_tool_use in an ft_recurrent loop with accumulate_output,
+        adding the context validator gate that decides when accumulated context
+        is sufficient.
+        """
+        tool_use = self._make_tool_use(worktree_tensor)
+
+        async def code_context_gather(coords: List[int], prompt: str) -> Tuple[str, Status]:
+            batch_idx = coords[0]
+            retry_idx = coords[1]
+
+            # Run one tool-use step
+            trace, tool_status = await tool_use(coords, prompt)
+
+            # If tool_use itself declared confidence (CONTEXT_SUFFICIENT), pass through
+            if tool_status.is_confidence:
+                return (trace, tool_status)
+
+            worktree_path = _read_element(worktree_tensor, batch_idx)
+            task_json_path = os.path.join(worktree_path, ".cloze_task.json")
+            with open(task_json_path) as f:
+                task = json.load(f)
+
+            # Context validator: check if accumulated context is sufficient
             context_validator = self._context_validator(worktree_path, task)
             ok, cv_msg = context_validator.validate(prompt + "\n" + trace)
             print(f"[DEBUG b{batch_idx} r{retry_idx}] context_validator: ok={ok} msg={cv_msg}")
