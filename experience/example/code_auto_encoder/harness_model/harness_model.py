@@ -96,6 +96,29 @@ def _parse_tool_call(response: str) -> Tuple[str, dict]:
     return tool_name, kwargs
 
 
+def _concat_context(acc: str, cur: str) -> str:
+    """Accumulate clean read results, discarding grep/glob noise and errors."""
+    # Extract clean result from trace format "[header]\nresult"
+    if cur.startswith("[") and "\n" in cur:
+        header, result = cur.split("\n", 1)
+        # Only accumulate read results (clean file contents), skip grep/glob
+        if not header.startswith("[read("):
+            return acc
+        if result.startswith("ERROR:") or result.startswith("(file not found") or result.startswith("(read error") or result.startswith("(no matches") or result.startswith("(empty") or result.startswith("(regex error"):
+            clean = ""
+        else:
+            clean = result
+    elif cur.startswith("[invalid tool"):
+        clean = ""
+    else:
+        clean = cur
+    if not clean:
+        return acc
+    if not acc:
+        return clean
+    return acc + "\n\n---\n\n" + clean
+
+
 class HarnessModel(nn.Module):
     def __init__(
         self,
@@ -129,30 +152,9 @@ class HarnessModel(nn.Module):
             self._make_code_context_gather(worktree_tensor),
         )
 
-        def concat_context(acc: str, cur: str) -> str:
-            # Extract clean result from trace format "[header]\nresult"
-            if cur.startswith("[") and "\n" in cur:
-                header, result = cur.split("\n", 1)
-                # Only accumulate read results (clean file contents), skip grep/glob
-                if not header.startswith("[read("):
-                    return acc
-                if result.startswith("ERROR:") or result.startswith("(file not found") or result.startswith("(read error") or result.startswith("(no matches") or result.startswith("(empty") or result.startswith("(regex error"):
-                    clean = ""
-                else:
-                    clean = result
-            elif cur.startswith("[invalid tool"):
-                clean = ""
-            else:
-                clean = cur
-            if not clean:
-                return acc
-            if not acc:
-                return clean
-            return acc + "\n\n---\n\n" + clean
-
         context_ft, _ = ft_recurrent(
             ft_gather,
-            accumulate_output=concat_context,
+            accumulate_output=_concat_context,
             task_prompt=self.task_prompt,
             llm_method=self.llm_method,
         )
