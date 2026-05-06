@@ -115,7 +115,11 @@ future_tensor/
     ├── ft_recurrent_backward.py # recurrent_backward: LLM reflection on failed iterations
     ├── ft_recurrent.py       # FtRecurrent: autograd Function for recurrent loop
     ├── ft_expert_forward.py  # ft_expert_forward: expert query+translate per element
-    └── ft_expert.py          # FtExpert: autograd Function for expert with backward
+    ├── ft_expert.py          # FtExpert: autograd Function for expert with backward
+    ├── switch_forward.py     # switch_forward: lazy control-flow selection
+    ├── switch_backward.py    # switch_backward: route grad to selected branch
+    ├── switch_2nd.py         # SwitchGradFn: 2nd-derivative wrapper for switch
+    └── ft_switch.py          # FtSwitch: autograd Function for switch/match control flow
 ```
 
 ---
@@ -179,6 +183,28 @@ output, prompt_tensor, indexes_map = ft_expert(
 
 For each element: query `experience` via `select_qkv_indexes`, retrieve top-k entries,
 call LLM to translate. Backward reflects on failure cases to update `experience`.
+
+### `ft_switch(condition, cases)` — Switch / match control flow
+
+```python
+from experience.future_tensor.function.ft_switch import ft_switch
+
+cases = [
+    ("A", "case A summary", "case A description", branch_a_ft),
+    ("B", "case B summary", "case B description", branch_b_ft),
+]
+output = ft_switch(condition_ft, cases)
+```
+
+Lazy switch: the branch selection is deferred to `ft_async_get` pull time.
+The `condition` FutureTensor's symbolic content (read from its first element's
+storage file) determines which branch is selected.
+
+Forward: returns a lazy FutureTensor whose shape matches all branches.
+Branches must have uniform `ft_capacity_shape`.
+
+Backward: routes `grad_output` to the selected branch only; non-selected
+branches receive `None`. Supports 2nd-derivative tracing via `SwitchGradFn`.
 
 ---
 
