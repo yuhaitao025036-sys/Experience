@@ -2,18 +2,18 @@
 # Async FutureTensor version of st_moe_forward.
 #
 # Parameter mapping:
-#   st_moe.input      <=> ft_moe.input (direct, FutureTensor, requires_grad)
-#   st_moe.context    <=> ft_moe.prompt (from upstream ft_async_get, requires_grad=False)
-#   st_moe.experience <=> ft_moe.experience (direct)
+#   st_moe.input      <=> ft_expert.input (direct, FutureTensor, requires_grad)
+#   st_moe.context    <=> ft_expert.prompt (from upstream ft_async_get, requires_grad=False)
+#   st_moe.experience <=> ft_expert.experience (direct)
 #
 # The output is a FutureTensor whose ft_async_get:
 #   1. Takes (coordinates, prompt) from upstream
 #   2. If input is not None, reads input[coordinates] content as st_moe.input
 #   3. Uses prompt as st_moe.context (requires_grad=False)
-#   4. Runs MoE: query, select topk, workspace, LLM
+#   4. Runs expert: query, select topk, workspace, LLM
 #   5. Returns (output_content, Status)
 
-ft_moe_forward :=
+ft_expert_forward :=
     ($output FutureTensor[$shape],
      $prompt_tensor FutureTensor[$shape],
      $selected_experience_qkv_indexes_map dict)
@@ -30,9 +30,9 @@ ft_moe_forward :=
     <- ($shape <- $input.shape)
     <- { prompt_tensor = future tensor of none_like(input) }
     <- { selected_experience_qkv_indexes_map = {} }
-    <- $output.ft_async_get ft_moe_forward_async_get
+    <- $output.ft_async_get ft_expert_forward_async_get
 
-ft_moe_forward_async_get :=
+ft_expert_forward_async_get :=
     Awaitable[(str, Status)]
     <- $coordinates list[int]
     <- $prompt str  # from upstream ft_async_get => becomes st_moe.context

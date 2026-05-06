@@ -114,8 +114,8 @@ future_tensor/
     ├── ft_recurrent_forward.py  # recurrent_forward: retry loop encoded in last dim
     ├── ft_recurrent_backward.py # recurrent_backward: LLM reflection on failed iterations
     ├── ft_recurrent.py       # FtRecurrent: autograd Function for recurrent loop
-    ├── ft_moe_forward.py     # ft_moe_forward: MoE query+translate per element
-    └── ft_moe.py             # FtMoe: autograd Function for MoE with backward
+    ├── ft_expert_forward.py  # ft_expert_forward: expert query+translate per element
+    └── ft_expert.py          # FtExpert: autograd Function for expert with backward
 ```
 
 ---
@@ -166,12 +166,12 @@ For each prefix coordinate, iterates `i` in `range(recurrent_dim)`:
 `accumulate_output` enables context accumulation across iterations (e.g. concatenating
 clean tool-call results in the `HarnessModel` context-gather stage).
 
-### `ft_moe(ft, experience, ...)` — Mixture-of-Experts translation
+### `ft_expert(ft, experience, ...)` — Expert translation
 
 ```python
-from experience.future_tensor.function.ft_moe import ft_moe
+from experience.future_tensor.function.ft_expert import ft_expert
 
-output, prompt_tensor, indexes_map = ft_moe(
+output, prompt_tensor, indexes_map = ft_expert(
     input_ft, experience_tensor,
     topk=16, task_prompt="...", llm_method="raw_llm_api",
 )

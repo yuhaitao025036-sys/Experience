@@ -275,7 +275,7 @@ second_derivative/
 
 future_tensor/function/      # GradFn wrappers live next to their 1st-derivative ops
 ├── recurrent_2nd.py         # RecurrentGradFn  (wraps recurrent_backward)
-├── moe_2nd.py               # MoeGradFn        (wraps st_moe_backward)
+├── expert_2nd.py            # ExpertGradFn     (wraps st_moe_backward)
 ├── slice_2nd.py             # SliceGradFn      (wraps slice_backward)
 └── unsqueeze_2nd.py         # UnsqueezeGradFn  (wraps unsqueeze squeeze-via-slice)
 ```

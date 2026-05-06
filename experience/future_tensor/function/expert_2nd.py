@@ -1,12 +1,12 @@
 """
-MoeGradFn: autograd.Function wrapping st_moe_backward.
+ExpertGradFn: autograd.Function wrapping st_moe_backward.
 
   forward  = st_moe_backward  (1st derivative)
   backward = 2nd-derivative dispatch via the active Policy
 
-FtMoe.backward() calls MoeGradFn.apply(...) instead of st_moe_backward(...)
+FtExpert.backward() calls ExpertGradFn.apply(...) instead of st_moe_backward(...)
 directly so that second_derivative_start.grad.backward() naturally triggers
-MoeGradFn.backward() (the 2nd-derivative dispatch).
+ExpertGradFn.backward() (the 2nd-derivative dispatch).
 """
 
 import torch
@@ -14,7 +14,7 @@ import torch
 from experience.future_tensor.second_derivative.dispatcher import get_2nd_dispatcher
 
 
-class MoeGradFn(torch.autograd.Function):
+class ExpertGradFn(torch.autograd.Function):
     """autograd.Function whose forward IS st_moe_backward (the 1st derivative).
 
     By wrapping the 1st backward inside an autograd.Function, PyTorch's

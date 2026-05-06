@@ -15,7 +15,7 @@ Public API:
 autograd.Function wrappers (1st-backward → 2nd-derivative dispatch):
 
     RecurrentGradFn   (wraps recurrent_backward)
-    MoeGradFn         (wraps st_moe_backward)
+    ExpertGradFn      (wraps st_moe_backward)
     SliceGradFn       (wraps slice_backward)
     UnsqueezeGradFn   (wraps unsqueeze squeeze-via-slice_forward)
 """

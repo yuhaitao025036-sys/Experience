@@ -1,6 +1,6 @@
 """
-FtMoe := torch.autograd.Function[
-    $forward Import[{future_tensor function ft_moe_forward.viba}],
+FtExpert := torch.autograd.Function[
+    $forward Import[{future_tensor function ft_expert_forward.viba}],
     $backward Import[{symbolic_tensor function st_moe_backward.viba}],
     $ctx.context Symbolic[torch.Tensor] # prompt_tensor._tensor, requires_grad=False
     $ctx.output_prompt OutputPromptCallable # default None
@@ -15,15 +15,15 @@ FtMoe := torch.autograd.Function[
     $ctx.llm_env dict[str, str] # default None
 ]
 
-ft_moe := FtMoe.apply
+ft_expert := FtExpert.apply
 """
 
 import torch
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from experience.future_tensor.future_tensor import FutureTensor
-from experience.future_tensor.function.ft_moe_forward import (
-    ft_moe_forward,
+from experience.future_tensor.function.ft_expert_forward import (
+    ft_expert_forward,
     build_nested_indexes_list,
 )
 from experience.symbolic_tensor.function.st_moe_forward import default_prompt_for_output
@@ -37,7 +37,7 @@ from experience.symbolic_tensor.function.st_moe_backward import (
 from experience.symbolic_tensor.function.select_qkv_indexes import default_retrieval_method
 from experience.symbolic_tensor.tensor_util.todo_tensor_like import todo_tensor_like
 from experience.symbolic_tensor.function import symbolic_grad_registry
-from experience.future_tensor.function.moe_2nd import MoeGradFn
+from experience.future_tensor.function.expert_2nd import ExpertGradFn
 
 
 OutputPromptCallable = Callable[..., str]
@@ -46,16 +46,16 @@ BackwardPromptCallable = Callable[..., str]
 RetrievalMethodCallable = Callable[[str, str], float]
 
 
-class FtMoe(torch.autograd.Function):
-    """Autograd Function for FutureTensor Mixture-of-Experts.
+class FtExpert(torch.autograd.Function):
+    """Autograd Function for FutureTensor Expert.
 
-    Forward: FutureTensor — lazy, async MoE (query + select + LLM translate).
+    Forward: FutureTensor — lazy, async expert (query + select + LLM translate).
     Backward: Symbolic[torch.Tensor] — materialized, concurrent LLM reflection.
 
     Parameter mapping:
-        ft_moe.input      <=> st_moe.input (direct, FutureTensor, requires_grad)
-        ft_moe.prompt     <=> st_moe.context (from upstream ft_async_get, requires_grad=False)
-        ft_moe.experience <=> st_moe.experience (direct)
+        ft_expert.input      <=> st_moe.input (direct, FutureTensor, requires_grad)
+        ft_expert.prompt     <=> st_moe.context (from upstream ft_async_get, requires_grad=False)
+        ft_expert.experience <=> st_moe.experience (direct)
     """
 
     @staticmethod
@@ -74,7 +74,7 @@ class FtMoe(torch.autograd.Function):
         llm_method: str = "raw_llm_api",
         llm_env: Optional[Dict[str, str]] = None,
     ) -> Tuple[FutureTensor, FutureTensor, Any]:
-        output, prompt_tensor, indexes_map = ft_moe_forward(
+        output, prompt_tensor, indexes_map = ft_expert_forward(
             input, experience, output_prompt, query_prompt, task_prompt, topk,
             retrieval_method=retrieval_method, llm_method=llm_method, llm_env=llm_env,
         )
@@ -148,10 +148,10 @@ class FtMoe(torch.autograd.Function):
             grad_output = symbolic_grad_output
 
         # Call st_moe_backward with direct mapping:
-        #   input = input_st (ft_moe.input)
-        #   context = prompt_tensor_st (ft_moe.prompt)
-        #   experience = experience (ft_moe.experience)
-        grad_input, grad_experience = MoeGradFn.apply(
+        #   input = input_st (ft_expert.input)
+        #   context = prompt_tensor_st (ft_expert.prompt)
+        #   experience = experience (ft_expert.experience)
+        grad_input, grad_experience = ExpertGradFn.apply(
             grad_output,
             input_st,
             output_st,
@@ -168,11 +168,11 @@ class FtMoe(torch.autograd.Function):
         )
 
         # Register symbolic grads keyed by tensor uids
-        # grad_input → grad for ft_moe.input
+        # grad_input → grad for ft_expert.input
         if grad_input is not None:
             symbolic_grad_registry.register(input_st.st_tensor_uid, grad_input)
 
-        # grad_experience → grad for ft_moe.experience
+        # grad_experience → grad for ft_expert.experience
         if grad_experience is not None:
             symbolic_grad_registry.register(experience.st_tensor_uid, grad_experience)
 
@@ -182,7 +182,7 @@ class FtMoe(torch.autograd.Function):
         return grad_input, grad_experience, None, None, None, None, None, None, None, None, None, None
 
 
-def ft_moe(
+def ft_expert(
     input: FutureTensor,
     experience: torch.Tensor,
     output_prompt: Optional[OutputPromptCallable] = None,
@@ -196,10 +196,10 @@ def ft_moe(
     llm_method: str = "raw_llm_api",
     llm_env: Optional[Dict[str, str]] = None,
 ) -> Tuple[FutureTensor, FutureTensor, Any]:
-    """FutureTensor Mixture-of-Experts with autograd support.
+    """FutureTensor Expert with autograd support.
 
     Async forward: each element receives a prompt (context), queries experience
-    via MoE using input content, and generates output via LLM.
+    via expert using input content, and generates output via LLM.
 
     Backward: reuses st_moe_backward with direct mapping.
 
@@ -221,7 +221,7 @@ def ft_moe(
     Returns:
         (output, prompt_tensor, selected_experience_qkv_indexes_map)
     """
-    return FtMoe.apply(
+    return FtExpert.apply(
         input, experience, output_prompt, query_prompt,
         grad_input_prompt, grad_exp_key_prompt, grad_exp_value_prompt,
         task_prompt, topk, retrieval_method, llm_method, llm_env,
@@ -250,7 +250,7 @@ if __name__ == "__main__":
             os.environ[key] = val
     os.environ.pop("CLAUDECODE", None)
 
-    print("Running 20 tests for ft_moe (FtMoe)...\n")
+    print("Running 20 tests for ft_expert (FtExpert)...\n")
 
     passed = 0
     failed = 0
@@ -279,9 +279,9 @@ if __name__ == "__main__":
 
     # ── Tests 1-3: Class structure ──
     print("Tests 1-3: Class structure")
-    run_test("FtMoe is autograd.Function subclass",
-             issubclass(FtMoe, torch.autograd.Function))
-    run_test("ft_moe is callable", callable(ft_moe))
+    run_test("FtExpert is autograd.Function subclass",
+             issubclass(FtExpert, torch.autograd.Function))
+    run_test("ft_expert is callable", callable(ft_expert))
     run_test("default prompts re-exported",
              all(callable(f) for f in [
                  default_prompt_for_output, default_prompt_for_query,
@@ -302,7 +302,7 @@ if __name__ == "__main__":
         ]
         experience_tensor = make_tensor(experience_data, tmpdir)
 
-        output, prompt_tensor, indexes = ft_moe(
+        output, prompt_tensor, indexes = ft_expert(
             ft_input, experience_tensor, topk=2,
         )
 
@@ -321,11 +321,11 @@ if __name__ == "__main__":
         experience_tensor = make_tensor(experience_data, tmpdir)
 
         # ft_input's ft_async_get returns input content (= st_moe.input)
-        async def moe_get(coords, prompt):
+        async def expert_get(coords, prompt):
             return ("Hello world in English", Status.confidence(0.9))
 
-        ft_input = FutureTensor(tmpdir, moe_get, [sympy.Integer(1)])
-        output, prompt_tensor, indexes = ft_moe(
+        ft_input = FutureTensor(tmpdir, expert_get, [sympy.Integer(1)])
+        output, prompt_tensor, indexes = ft_expert(
             ft_input, experience_tensor, topk=2,
             task_prompt="Translate English to French.",
         )
@@ -359,7 +359,7 @@ if __name__ == "__main__":
         experience_tensor = make_tensor(experience_data, tmpdir)
 
         ctx = type('Ctx', (), {})()
-        FtMoe.forward(
+        FtExpert.forward(
             ctx, ft_input, experience_tensor,
             task_prompt="test task",
             topk=4,
@@ -382,7 +382,7 @@ if __name__ == "__main__":
             return (f"out:{prompt[:10]}", Status.confidence(0.8))
 
         ft_input = FutureTensor(tmpdir, prompt_cap_get, [sympy.Integer(2)])
-        output, prompt_tensor, indexes = ft_moe(
+        output, prompt_tensor, indexes = ft_expert(
             ft_input, experience_tensor, topk=1,
         )
 
@@ -415,7 +415,7 @@ if __name__ == "__main__":
             return ("Hello world in English", Status.confidence(0.9))
 
         ft_input = FutureTensor(tmpdir, bw_get, [sympy.Integer(1)])
-        output, prompt_tensor, indexes_map = ft_moe(
+        output, prompt_tensor, indexes_map = ft_expert(
             ft_input, experience_tensor, topk=2,
             task_prompt="Translate English to French.",
         )
@@ -453,9 +453,9 @@ if __name__ == "__main__":
         ctx.llm_method = "raw_llm_api"
         ctx.llm_env = None
 
-        result = FtMoe.backward(ctx, grad_output, None, None)
-        grad_input_result = result[0]  # grad for ft_moe's input (= st_moe's input)
-        grad_experience_result = result[1]  # grad for ft_moe's experience
+        result = FtExpert.backward(ctx, grad_output, None, None)
+        grad_input_result = result[0]  # grad for ft_expert's input (= st_moe's input)
+        grad_experience_result = result[1]  # grad for ft_expert's experience
 
         run_test("grad_input shape matches input",
                  grad_input_result is not None and list(grad_input_result.shape) == [1],
@@ -472,4 +472,4 @@ if __name__ == "__main__":
             run_test("grad_input has content", False, "not None", None)
 
     print(f"\n  Passed: {passed}, Failed: {failed}, Total: {passed + failed}")
-    print("All ft_moe tests completed.")
+    print("All ft_expert tests completed.")

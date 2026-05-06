@@ -1,16 +1,16 @@
 """
-ft_moe_forward: Async FutureTensor version of st_moe_forward.
+ft_expert_forward: Async FutureTensor version of st_moe_forward.
 
 Parameter mapping:
-    st_moe.input      <=> ft_moe.input (direct, FutureTensor, requires_grad)
-    st_moe.context    <=> ft_moe.prompt (from upstream ft_async_get, requires_grad=False)
-    st_moe.experience <=> ft_moe.experience (direct)
+    st_moe.input      <=> ft_expert.input (direct, FutureTensor, requires_grad)
+    st_moe.context    <=> ft_expert.prompt (from upstream ft_async_get, requires_grad=False)
+    st_moe.experience <=> ft_expert.experience (direct)
 
 The output is a FutureTensor whose ft_async_get:
   1. Takes (coordinates, prompt) from upstream
   2. If input coefficient > 0, reads input[coordinates] content as st_moe.input
   3. Uses prompt as st_moe.context (requires_grad=False)
-  4. Runs MoE: query, select topk, workspace, LLM
+  4. Runs expert: query, select topk, workspace, LLM
   5. Returns (output_content, Status)
 """
 
@@ -44,7 +44,7 @@ from experience.llm_client.task_handler import TaskHandler
 from experience.symbolic_tensor.tensor_util.st_setitem import st_setitem
 
 
-def ft_moe_forward(
+def ft_expert_forward(
     input: FutureTensor,
     experience: torch.Tensor,
     output_prompt: Optional[Callable[..., str]] = None,
@@ -58,9 +58,9 @@ def ft_moe_forward(
     """Async FutureTensor version of st_moe_forward.
 
     Parameter mapping:
-        st_moe.input      <=> ft_moe.input (direct, FutureTensor, requires_grad)
-        st_moe.context    <=> ft_moe.prompt (from upstream ft_async_get, requires_grad=False)
-        st_moe.experience <=> ft_moe.experience (direct)
+        st_moe.input      <=> ft_expert.input (direct, FutureTensor, requires_grad)
+        st_moe.context    <=> ft_expert.prompt (from upstream ft_async_get, requires_grad=False)
+        st_moe.experience <=> ft_expert.experience (direct)
 
     For each element, the ft_async_get callback:
       1. Receives a prompt string (= st_moe.context)
@@ -102,10 +102,10 @@ def ft_moe_forward(
     # Lock for thread-safe access to select_qkv_indexes (creates cached view dir)
     _qkv_lock = threading.Lock()
 
-    def _sync_moe_for_element(
+    def _sync_expert_for_element(
         coordinates: List[int], prompt: str,
     ) -> Tuple[str, Status]:
-        """Synchronous per-element MoE: query, select, workspace, LLM, read output.
+        """Synchronous per-element expert: query, select, workspace, LLM, read output.
 
         Runs in a thread executor so that internal asyncio.run() calls
         (inside TaskHandler / get_query_tensor) don't conflict with the
@@ -202,18 +202,18 @@ def ft_moe_forward(
             return ("", Status.self_confidence_but_failed(0.5))
         return (output_content, Status.confidence(1.0))
 
-    async def ft_moe_forward_async_get(
+    async def ft_expert_forward_async_get(
         coordinates: List[int], prompt: str
     ) -> Tuple[str, Status]:
         import asyncio
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
-            None, _sync_moe_for_element, coordinates, prompt,
+            None, _sync_expert_for_element, coordinates, prompt,
         )
 
     output = FutureTensor(
         input.ft_static_tensor.st_relative_to,
-        ft_moe_forward_async_get,
+        ft_expert_forward_async_get,
         ft_shape_schema=[sympy.Integer(s) for s in input_shape],
     )
 
@@ -269,7 +269,7 @@ if __name__ == "__main__":
             os.environ[key] = val
     os.environ.pop("CLAUDECODE", None)
 
-    print("Running 20 tests for ft_moe_forward...\n")
+    print("Running 20 tests for ft_expert_forward...\n")
 
     passed = 0
     failed = 0
@@ -298,7 +298,7 @@ if __name__ == "__main__":
 
     # ── Tests 1-3: Function structure ──
     print("Tests 1-3: Function structure")
-    run_test("ft_moe_forward is callable", callable(ft_moe_forward))
+    run_test("ft_expert_forward is callable", callable(ft_expert_forward))
     run_test("build_nested_indexes_list is callable", callable(build_nested_indexes_list))
     run_test("default_prompt_for_output is callable", callable(default_prompt_for_output))
 
@@ -316,7 +316,7 @@ if __name__ == "__main__":
         ]
         experience_tensor = make_tensor(experience_data, tmpdir)
 
-        output, prompt_tensor, indexes_map = ft_moe_forward(
+        output, prompt_tensor, indexes_map = ft_expert_forward(
             ft_input, experience_tensor, topk=2,
         )
 
@@ -339,7 +339,7 @@ if __name__ == "__main__":
 
         ft_none_input = FutureTensor(tmpdir, none_get, [sympy.Integer(1)])
 
-        output, prompt_tensor, indexes_map = ft_moe_forward(
+        output, prompt_tensor, indexes_map = ft_expert_forward(
             ft_none_input, experience_tensor, topk=1,
         )
 
@@ -362,7 +362,7 @@ if __name__ == "__main__":
 
         ft_input = FutureTensor(tmpdir, moe_get, [sympy.Integer(1)])
 
-        output, prompt_tensor, indexes_map = ft_moe_forward(
+        output, prompt_tensor, indexes_map = ft_expert_forward(
             ft_input, experience_tensor, topk=2,
             task_prompt="Translate English to French.",
         )
@@ -395,7 +395,7 @@ if __name__ == "__main__":
             return (f"captured:{prompt[:10]}", Status.confidence(0.8))
 
         ft_input = FutureTensor(tmpdir, prompt_capture_get, [sympy.Integer(2)])
-        output, prompt_tensor, indexes_map = ft_moe_forward(
+        output, prompt_tensor, indexes_map = ft_expert_forward(
             ft_input, experience_tensor, topk=1,
         )
 
@@ -432,7 +432,7 @@ if __name__ == "__main__":
             return (f"result_{coords}", Status.confidence(0.9))
 
         ft_input = FutureTensor(tmpdir, idx_get, [sympy.Integer(2)])
-        output, prompt_tensor, indexes_map = ft_moe_forward(
+        output, prompt_tensor, indexes_map = ft_expert_forward(
             ft_input, experience_tensor, topk=2,
         )
 
@@ -467,7 +467,7 @@ if __name__ == "__main__":
             return (f"element_{coords[0]}: {prompt[:20]}", Status.confidence(0.85))
 
         ft_input = FutureTensor(tmpdir, multi_get, [sympy.Integer(3)])
-        output, prompt_tensor, indexes_map = ft_moe_forward(
+        output, prompt_tensor, indexes_map = ft_expert_forward(
             ft_input, experience_tensor, topk=2,
             task_prompt="Translate English to French.",
         )
@@ -495,4 +495,4 @@ if __name__ == "__main__":
                  len(indexes_map) == 3, 3, len(indexes_map))
 
     print(f"\n  Passed: {passed}, Failed: {failed}, Total: {passed + failed}")
-    print("All ft_moe_forward tests completed.")
+    print("All ft_expert_forward tests completed.")

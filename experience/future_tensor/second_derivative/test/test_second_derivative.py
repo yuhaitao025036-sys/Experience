@@ -8,9 +8,9 @@ Tests are grouped by scenario:
   4. TracePolicy (default): records collected without LLM
   5. Custom policy: selective dispatch
   6. RecurrentGradFn: autograd.Function structure
-  7. MoeGradFn: autograd.Function structure
+  7. ExpertGradFn: autograd.Function structure
   8. Integration: RecurrentGradFn.backward() dispatches into active TracePolicy
-  9. Integration: MoeGradFn.backward() dispatches into active TracePolicy
+  9. Integration: ExpertGradFn.backward() dispatches into active TracePolicy
  10. ReflectionRecord fields
 
 Run:
@@ -54,7 +54,7 @@ from experience.future_tensor.second_derivative import (
     PolicyConflictError,
 )
 from experience.future_tensor.function.recurrent_2nd import RecurrentGradFn
-from experience.future_tensor.function.moe_2nd import MoeGradFn
+from experience.future_tensor.function.expert_2nd import ExpertGradFn
 
 run_test("need_2nd_derivative callable", callable(need_2nd_derivative))
 run_test("get_2nd_dispatcher callable", callable(get_2nd_dispatcher))
@@ -65,8 +65,8 @@ run_test("PolicyConflictError is RuntimeError subclass",
          issubclass(PolicyConflictError, RuntimeError))
 run_test("RecurrentGradFn is autograd.Function subclass",
          issubclass(RecurrentGradFn, torch.autograd.Function))
-run_test("MoeGradFn is autograd.Function subclass",
-         issubclass(MoeGradFn, torch.autograd.Function))
+run_test("ExpertGradFn is autograd.Function subclass",
+         issubclass(ExpertGradFn, torch.autograd.Function))
 
 # ── Group 2: need_2nd_derivative ─────────────────────────────────────────────
 print("\nGroup 2: need_2nd_derivative")
@@ -226,11 +226,11 @@ with tempfile.TemporaryDirectory() as tmpdir:
         run_test("record fn is recurrent_backward", coll6[0].fn is recurrent_backward)
         run_test("grad_output in inputs", "grad_output" in coll6[0].inputs)
 
-# ── Group 7: MoeGradFn autograd.Function structure ────────────────────────────
-print("\nGroup 7: MoeGradFn — autograd.Function structure")
+# ── Group 7: ExpertGradFn autograd.Function structure ────────────────────────────
+print("\nGroup 7: ExpertGradFn — autograd.Function structure")
 
-run_test("MoeGradFn is autograd.Function subclass",
-         issubclass(MoeGradFn, torch.autograd.Function))
+run_test("ExpertGradFn is autograd.Function subclass",
+         issubclass(ExpertGradFn, torch.autograd.Function))
 from experience.symbolic_tensor.function.st_moe_backward import st_moe_backward as _st_moe_backward
 run_test("st_moe_backward callable", callable(_st_moe_backward))
 
@@ -283,8 +283,8 @@ with tempfile.TemporaryDirectory() as tmpdir:
         run_test("topk_self_confidence_but_failed in inputs",
                  "topk_self_confidence_but_failed" in coll8[0].inputs)
 
-# ── Group 9: Integration — MoeGradFn.backward() dispatches ────────────────────
-print("\nGroup 9: Integration — MoeGradFn.backward() → TracePolicy")
+# ── Group 9: Integration — ExpertGradFn.backward() dispatches ────────────────────
+print("\nGroup 9: Integration — ExpertGradFn.backward() → TracePolicy")
 
 # Load API credentials (st_moe_backward fires LLM for grad_experience)
 import subprocess as _sp
@@ -320,7 +320,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
 
     coll9 = []
     with dispatch_policy(TracePolicy(coll9)):
-        gi9, ge9 = MoeGradFn.apply(
+        gi9, ge9 = ExpertGradFn.apply(
             grad_out9, inp9, out9, exp9,
             "Translate English to French.",  # task_prompt
             1,                               # topk
@@ -332,13 +332,13 @@ with tempfile.TemporaryDirectory() as tmpdir:
             None,                            # grad_exp_value_prompt
             idx9,                            # selected_experience_qkv_indexes_list
         )
-        # Trigger 2nd derivative by calling .backward() on output of MoeGradFn
+        # Trigger 2nd derivative by calling .backward() on output of ExpertGradFn
         if gi9 is not None and gi9.requires_grad:
             gi9.sum().backward()
         elif ge9 is not None and ge9.requires_grad:
             ge9.sum().backward()
 
-    run_test("MoeGradFn.backward() dispatched 2nd derivative", len(coll9) >= 1)
+    run_test("ExpertGradFn.backward() dispatched 2nd derivative", len(coll9) >= 1)
     if len(coll9) >= 1:
         run_test("record fn is st_moe_backward", coll9[0].fn is st_moe_backward)
         run_test("grad_output in inputs",
